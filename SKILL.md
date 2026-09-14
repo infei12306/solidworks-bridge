@@ -173,6 +173,43 @@ example: 50x30x20 mm box → mass properties → save → render.
     merged, a face with ~40 inner loops exported with 641 open boundary edges and a
     volume 11 % short. Multi-body also changes the volume bookkeeping - fully
     buried solids count in full.
+25. **Use the injected `doc`; it is already early-bound. `app.ActiveDoc` is not.**
+    The preamble says so and it is not cosmetic. On the late-bound `CDispatch` that
+    `app.ActiveDoc` returns, a zero-argument method such as `FirstFeature` is
+    resolved with PROPERTYGET and raises `DISP_E_MEMBERNOTFOUND` - so a hand-rolled
+    walk of the feature tree fails on an assembly it can otherwise read fine. If
+    you must fetch the document yourself:
+    `cast(app.ActiveDoc, "IModelDoc2")`. Measured: `type(doc).__name__` is
+    `IModelDoc2` for the injected handle and `CDispatch` for `app.ActiveDoc`.
+26. **Assembly-level calls live on `IAssemblyDoc`.** `GetComponents` is *not* on
+    `IModelDoc2`: the early-bound object raises `AttributeError ... has no
+    attribute 'GetComponents'` while the late-bound one answers it, which makes the
+    failure look random. `cast(app.ActiveDoc, "IAssemblyDoc")`. In the same spirit,
+    `FeatureByName` is not on `IModelDoc2` either - reach a folder through
+    `iter_features`.
+27. **VARIANT-array returns are plain tuples, not `.Count`/`.Item` collections.**
+    `GetComponents(False)` hands back a tuple (pywin32 converts the array), and so
+    does `IComponent2.GetXform()`. Write one
+    `as_list(coll)` helper that accepts either, instead of assuming `.Count` -
+    `'tuple' object has no attribute 'Count'` costs a whole job cycle.
+28. **`IComponent2.GetXform()` layout is 16 doubles:** `[0:9]` = 3x3 rotation
+    row-major, `[9:12]` = translation **in metres**, `[12]` = scale. Slicing
+    `[4:7]` and `[8:11]` as if they were rows yields a plausible-looking nonsense
+    matrix (it reported a translation in the rotation block). There is no
+    `.ArrayData` on the result - it already *is* the array.
+29. **Read `IComponent2.GetConstrainedStatus()` before telling anyone a part can be
+    dragged.** Measured constants: `swUnderConstrained=2`, `swFullyConstrained=3`,
+    `swOverConstrained=4`. A component can be unfixed and still immovable because
+    its mates fully define it (that is exactly what happened here: the plate was
+    floating but status 3, the board floating and status 2). `IsFixed()` alone
+    cannot answer "why won't it move"; you need both numbers plus the mate list.
+30. **Check that the *installed* `swcore` is the repo's `swcore`.** The install at
+    `%LOCALAPPDATA%\swbridge\sw\` is a copy, not a clone, and it lags: on
+    2026-09-15 it had neither `iter_features` nor `reference_planes` while the repo
+    had both. Rule 15 tells you to call a helper the running code may not define.
+    One line at the top of a job is the whole staleness test -
+    `hasattr(swcore, "iter_features")` - and the fix is copying
+    `sw/swcore.py` from the repo over the installed copy.
 
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-36-body-board-from-a-vendor-cad-file) carries
@@ -213,6 +250,25 @@ over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
 4. One job, one document. Close a previous document with the same target name at
    the start so the job is re-runnable.
 
+**Inspect an assembly the user already has open (read-only)**
+1. Change nothing: no `NewPart`, no feature, no save, no close. Read `doc` (the
+   injected one - rule 25), never `app.ActiveDoc`.
+2. Walk with `swcore.iter_features(doc)`; components come back as features of type
+   `Reference`, and the mate folder is the `MateGroup` (its name is `配合` on a
+   Chinese UI). Take its children with `GetFirstSubFeature`/`GetNextSubFeature`,
+   casting each to `IFeature`.
+3. Per component: `cast(comp, "IComponent2")` → `Name2`, `IsFixed`,
+   `GetConstrainedStatus`, `GetPathName`, and `GetXform` for the placement.
+4. Per mate: `GetSpecificFeature2` → `cast(..., "IMate2")` →
+   `GetMateEntityCount`/`MateEntity(k)` → `cast(..., "IMateEntity2")` →
+   `ReferenceComponent` (cast to `IComponent2` for the name). `IMateEntity2`
+   exposes `Reference` but **not** `Entity`/`EntityType`, so the face/edge a mate
+   uses is not directly readable - report the component pairs and be explicit that
+   the DOF count is inferred, or read `GetConstrainedStatus` instead of guessing.
+5. Write the report to a file under `OUT` (a **directory path** - rule 27's sibling
+   gotcha: `OUT["k"] = v` raises `'str' object does not support item assignment`);
+   the job's `log()` output is not always surfaced, a file on disk always is.
+
 **Something is stuck**
 1. `status --id <id>` → `RUNNING` with a flat log means the call never returned.
 2. `dialogs` → is there a MODAL window?
@@ -227,6 +283,13 @@ over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
 |---|---|
 | `no running SOLIDWORKS automation object` | Not running, or still starting. `launch`, or check the screen for a license dialog. |
 | `member not found (DISP_E_MEMBERNOTFOUND)` | A late-bound object, or a property called as a method. `cast(...)` / `getv(...)`. |
+| `DISP_E_MEMBERNOTFOUND` on `FirstFeature` only | You are holding `app.ActiveDoc` (late-bound). Use the injected `doc` (rule 25). |
+| `IModelDoc2 ... has no attribute 'GetComponents'` | It is on `IAssemblyDoc` (rule 26). |
+| `'tuple' object has no attribute 'Count'` | VARIANT array, not a COM collection (rule 27). |
+| `'tuple' object has no attribute 'ArrayData'` | `GetXform()` already *is* the 16 doubles (rule 28). |
+| `'str' object does not support item assignment` | `OUT` is a directory path, not a dict - write files into it. |
+| `hasattr(swcore, "iter_features")` is False | The installed bridge is stale; copy `sw/swcore.py` from the repo (rule 30). |
+| "why won't this component drag?" | `GetConstrainedStatus()`: 2 = under-constrained, 3 = fully defined (rule 29). |
 | `'str' object is not callable` | Same cause: the name is a property on that path. Use `getv`. |
 | `type library not registered` | Something used gencache. Run `genstubs.py`; never `EnsureDispatch`. |
 | `[<step>] SOLIDWORKS is busy ...` | `retry_call` gave up. Retry the job; if it persists, look for a progress dialog. |
