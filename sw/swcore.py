@@ -680,6 +680,47 @@ def dismiss_dialog(handle, button="cancel"):
     return command
 
 
+# --------------------------------------------------------------------------- tree
+
+
+def iter_features(doc, limit=5000):
+    """Walk the feature tree, yielding EARLY-BOUND IFeature objects.
+
+    This exists because feature navigation is the single most repeated trap in
+    this API: `FirstFeature()` and `GetNextFeature()` carry no CLSID in the type
+    library, so pywin32 hands back a late-bound CDispatch, and on a late-bound
+    object an unknown name is silently resolved with PROPERTYGET - making
+    `feature.GetTypeName2` already a string, so calling it raises
+    "'str' object is not callable".  Casting here, once, means no job has to
+    remember.  (Written after forgetting the cast in a real job.)"""
+    feature = cast(call(doc, "FirstFeature"), "IFeature")
+    count = 0
+    while feature is not None and count < limit:
+        yield feature
+        count += 1
+        feature = cast(call(feature, "GetNextFeature"), "IFeature")
+
+
+def reference_planes(doc):
+    """Return ({'front','top','right'} -> names, [all plane names in tree order]).
+
+    Planes are matched by NAME in either language (the UI may be Chinese:
+    '前视基准面'), and only fall back to tree position - front, top, right in a
+    default template - when no name matches."""
+    names = [getv(feature, "Name") for feature in iter_features(doc)
+             if getv(feature, "GetTypeName2") == "RefPlane"]
+
+    def pick(needles, index):
+        for name in names:
+            if any(needle in name.lower() for needle in needles):
+                return name
+        return names[index] if len(names) > index else None
+
+    return ({"front": pick(["front", "前视"], 0),
+             "top": pick(["top", "上视"], 1),
+             "right": pick(["right", "右视"], 2)}, names)
+
+
 # --------------------------------------------------------------------------- shots
 
 
@@ -816,6 +857,11 @@ def run_job(source, task_id=None, out_dir=None, log=print):
             "retry_call": retry_call,
             "call_out": call_out,
             "OUTARG": OUTARG,
+            "mm": mm,
+            "to_mm": to_mm,
+            "iter_features": iter_features,
+            "reference_planes": reference_planes,
+            "dialogs": lambda: dialogs(call(session.app, "GetProcessID")),
             "OUT": out_dir,
             "HOME": HOME,
             "log": lambda *a: (log(*a), sys.stdout.flush()),

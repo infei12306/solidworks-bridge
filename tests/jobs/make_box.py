@@ -31,23 +31,10 @@ d = cast(session.active(), "IModelDoc2")
 log("document: %s (type %s)" % (getv(d, "GetTitle"), getv(d, "GetType")))
 
 
-def first_ref_plane(document):
-    # FirstFeature() and GetNextFeature() come back LATE-BOUND (the type library
-    # gives no CLSID for them), and on a late-bound object pywin32 silently
-    # resolves an unknown name with PROPERTYGET - which is why an uncast
-    # `feature.GetTypeName2` is already a string.  Cast first, then read.
-    feature = cast(call(document, "FirstFeature"), "IFeature")
-    while feature is not None:
-        if getv(feature, "GetTypeName2") == "RefPlane":
-            return getv(feature, "Name")
-        feature = cast(call(feature, "GetNextFeature"), "IFeature")
-    return None
-
-
-plane = first_ref_plane(d)
+plane = reference_planes(d)[0]["front"]
 if plane is None:
     raise RuntimeError("no reference plane in the feature tree")
-log("sketch plane (found by type, not by name): %r" % plane)
+log("sketch plane (by name, either language): %r" % plane)
 
 ext = cast(getv(d, "Extension"), "IModelDocExtension")
 if not call(ext, "SelectByID2", plane, "PLANE", 0, 0, 0, False, 0, None, 0):

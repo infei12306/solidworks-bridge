@@ -110,6 +110,41 @@ example: 50x30x20 mm box → mass properties → save → render.
 12. **Jobs must not quit SOLIDWORKS or discard the user's work.** Close what you
     opened; never `quit` unless asked (and then `--force` is required while
     documents are open, because it discards unsaved changes).
+13. **Sketch create-methods take SKETCH-LOCAL coordinates and ignore the third
+    argument.** `CreateCircleByRadius(XC, YC, Zc, R)` puts the circle at sketch
+    `(XC, YC)`; measured local axes: front `(X, Y)`, top `(X, -Z)`, right
+    `(-Z, Y)`. Two wrong guesses were needed to find that. **Never trust it** -
+    read the result back off the body (see 15).
+14. **Never select existing geometry by coordinate.**
+    `SelectByID2("", "EDGE", x, y, z)` is a hit test in the *current view*: it
+    picked 3 of 4 hole rims and silently failed on the one facing away. Find the
+    entity from `IBody2.GetEdges()` / `ICurve.IsCircle()` / `CircleParams` and
+    select it with `cast(edge, "IEntity").Select2(True, 0)` - `IEdge` does not
+    expose the inherited `IEntity` members.
+15. **Verify a model from the solid, not from the API's return value.** Feature
+    calls return `None` on failure and `True`/a feature on success - and a
+    "successful" feature can still be wrong geometry. Read volume, surface area
+    and `GetBodyBox()` back and compare against values you computed first; check
+    hole axes from the cylindrical faces. Use `swcore.iter_features()` instead of
+    calling `FirstFeature`/`GetNextFeature` yourself.
+16. **For a countersink use `IFeatureManager.InsertFeatureChamfer(Options,
+    ChamferType, Width, Angle, OtherDist, 0, 0, 0)`.** The legacy
+    `IModelDoc2.FeatureChamfer(Width, Angle, Flip)` returns `None` on this build,
+    as does a drafted blind cut (tried with every sign and flip). A chamfer on a
+    circular rim IS a countersink - verified: Ø6.5 + 2 x 2.75 = Ø12 at 90 degrees,
+    with volume and area matching the analytic values to 0.0000 %.
+17. **A failed feature leaves its sketch OPEN, and `InsertSketch` is a TOGGLE.**
+    The next call then closes the open sketch instead of opening a new one, so
+    every retry after the first tests nothing. Check `getv(SketchManager,
+    "ActiveSketch")` and exit it before starting a new sketch.
+18. **Reconcile against arithmetic you have checked, not just against the model.**
+    The first correct bracket was reported as wrong because the expectation
+    double-counted the bore under the countersink. The check is only as good as
+    the number it compares to.
+
+Worked examples and the full trap list: [MODELING.md](MODELING.md) plus
+[tests/jobs/make_box.py](../tests/jobs/make_box.py) and
+[tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py).
 
 ## Workflows
 
