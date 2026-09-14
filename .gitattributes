@@ -1,0 +1,10 @@
+# Normalize line endings so a checkout is deterministic on any machine.
+* text=auto
+
+# Windows-native tooling
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+
+# read by Python or by humans
+*.py   text eol=lf
+*.md   text eol=lf

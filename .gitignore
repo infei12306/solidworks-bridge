@@ -1,0 +1,20 @@
+# runtime state - normally in %LOCALAPPDATA%\swbridge, ignored here too in case
+# SWBRIDGE_HOME points at a checkout
+logs/
+status/
+tasks/
+shots/
+out/
+stubs/
+data/
+
+# Python
+__pycache__/
+*.pyc
+
+# editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*~
