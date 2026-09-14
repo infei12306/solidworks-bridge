@@ -141,10 +141,46 @@ example: 50x30x20 mm box → mass properties → save → render.
     The first correct bracket was reported as wrong because the expectation
     double-counted the bore under the countersink. The check is only as good as
     the number it compares to.
+19. **`doc` is the USER's document, not "None when there is nothing open".** Start
+    every job with `NewPart` and prove it worked:
+    `int(getv(cast(getv(app,"ActiveDoc"),"IModelDoc2"), "GetType")) == 1`. A job
+    that trusted `if doc is None` wrote a sketch into the user's open assembly;
+    removing it afterwards is strictly worse than checking first. See MODELING.md
+    §19.
+20. **`SetAddToDB(True)` before creating sketch entities, `False` before the
+    feature.** Without it automatic relation inference *deletes arcs and merges
+    entity chains*: measured, a 9-line + 3-arc outline became 9 straight lines and
+    the profile was 48.9 mm² wrong. Always log
+    `GetLineCount`/`GetArcCount`/`GetSketchContourCount` back off the sketch.
+21. **`CreateArc(..., Direction=True)` is counter-clockwise**; a clockwise corner
+    passed `True` becomes the **270° major arc**. Choose per arc from the shorter
+    sweep (`forward = normalise(a1 - a0) > 0`), and *derive* each arc centre from
+    its endpoints instead of guessing it - a centre on the corner point is a notch,
+    not a rounded corner (cost 0.5708 mm² here). MODELING.md §21.
+22. **To start a boss away from the sketch plane use the start condition, not
+    `Flip`.** `Flip` is a no-op for a blind boss on the front plane, `Dir` means
+    *both directions*, and a negative depth returns `None`. The working recipe is
+    `T0=3` (`swStartOffset`) + `StartOffset=mm(start)`. Cuts: use
+    `FeatureCut4(Sd=False, T1=T2=1, ...)`, through-all both ways, which cannot miss
+    for want of a sign.
+23. **`ClearSelection2` immediately before every export.** A freshly created feature
+    stays selected and `SaveAs3` exports **only the selection**: measured, an STL
+    of 200 triangles and a STEP of 11 807 bytes from a 36-body part, with no error
+    code. Then verify the file by parsing it - `MANIFOLD_SOLID_BREP` count for STEP,
+    edge-use histogram plus divergence-theorem volume for STL.
+24. **Keep components as separate bodies (`merge=False` in `FeatureExtrusion3`).**
+    It is what an assembly wants, and it is the only way to a watertight STL:
+    merged, a face with ~40 inner loops exported with 641 open boundary edges and a
+    volume 11 % short. Multi-body also changes the volume bookkeeping - fully
+    buried solids count in full.
 
-Worked examples and the full trap list: [MODELING.md](MODELING.md) plus
-[tests/jobs/make_box.py](../tests/jobs/make_box.py) and
-[tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py).
+Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
+[second part](MODELING.md#second-part-a-36-body-board-from-a-vendor-cad-file) carries
+traps 19-28 with the measured numbers, and its closing section is the process
+post-mortem (probe before you build, compute the answer first, verify what you hand
+over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
+[tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py) and the MEGA 2560 job at
+`D:\桌面文件\workspace\arduino-mega2560\build_mega.py`.
 
 ## Workflows
 
@@ -164,6 +200,18 @@ Worked examples and the full trap list: [MODELING.md](MODELING.md) plus
 1. `shot --out D:\out\view.png` (renders the graphics area via `SaveBMP`: no
    window chrome, no focus stealing, works while occluded)
 2. Inspect the PNG.
+
+**Build a part from a vendor CAD file (EAGLE/KiCad/STEP source)**
+1. Convert the source into a plain table first (`board.brd` -> JSON -> a Python
+   literal of axis-aligned boxes in mm). Never hand-transcribe coordinates, and
+   generate the documentation from the same table so the two cannot drift.
+2. Compute the analytic answers (profile area in closed form, volumes, envelope,
+   hole positions) **before** building; they are the assertions.
+3. Build in one job: PCB outline + holes -> one sketch+feature per component with
+   `T0=3 + StartOffset` -> measure -> `ClearSelection2` -> save SLDPRT/STEP/STL with
+   `SaveAs3` (then re-save the part, see trap 27) -> parse the exports -> render.
+4. One job, one document. Close a previous document with the same target name at
+   the start so the job is re-runnable.
 
 **Something is stuck**
 1. `status --id <id>` → `RUNNING` with a flat log means the call never returned.
@@ -185,6 +233,11 @@ Worked examples and the full trap list: [MODELING.md](MODELING.md) plus
 | Job stuck at `RUNNING`, log flat | A modal dialog. `dialogs` then `dismiss`. |
 | `save` fails with `SaveAs3 returned 256` | That translator is not installed (measured for `.OBJ`). |
 | `info` shows `bodies: 0` | The part has no solid body (surface-only, or suppressed features). |
+| Sketch has 0 arcs / fewer lines than you drew | Automatic relations ate them. `SetAddToDB(True)` (trap 20). |
+| A rounded corner comes out as a notch | The arc centre is wrong or `Direction` is the wrong sense (trap 21). |
+| STEP/STL far too small, no error reported | Only the selected body was exported (trap 23). |
+| STL not watertight, volume short, all open edges on one plane | Merged model with a many-loop face; rebuild multi-body (trap 24). |
+| Several "different" renders are byte-identical | The numeric view id overrode the view name (trap 28). |
 
 Design decisions, the measured numbers, and the full pitfall log:
 [REFERENCE.md](REFERENCE.md).

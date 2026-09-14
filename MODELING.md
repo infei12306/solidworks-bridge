@@ -4,12 +4,13 @@ Everything here was measured on SOLIDWORKS 2025 SP5 (33.5.0.0053), Chinese UI,
 through this bridge. Nothing is copied from documentation that was not also
 verified against the live session.
 
-## Status of the two parts that have been built
+## Status of the parts that have been built
 
 | Part | State |
 |---|---|
 | `tests/jobs/make_box.py` - 50x30x20 mm block | **Complete.** Volume, area, centroid, STL triangle count and render all reconcile. |
 | `tests/jobs/make_bracket.py` - L bracket, 80 + 60 legs, 5 mm plate, 40 mm wide, four 6.5 mm countersunk holes | **Complete.** Volume and surface area match the analytic values to **0.0000 %**, all four hole axes verified from the body, envelope exactly 80 x 60 x 40 mm, STEP + STL + two renders produced. |
+| 36-body Arduino MEGA 2560 Rev3, built from the vendor's own EAGLE board file (`D:\桌面文件\workspace\arduino-mega2560\build_mega.py`) | **Complete.** Board outline area, board volume, whole-part volume, envelope and all six mounting-hole axes match analytic values exactly; STEP carries 36 solids; STL is watertight. See [§ Second part](#second-part-a-36-body-board-from-a-vendor-cad-file). |
 
 The bracket job asserts at every step, so a wrong intermediate state fails loudly
 instead of leaving a part that merely looks finished. It took four failed routes
@@ -153,3 +154,204 @@ Two further lessons came out of this:
   recipe, and (c) proving the result without a human looking at it. (c) is
   largely solved by the checks in `make_bracket.py`; (a) has a working pattern
   now; (b) is where each new part type costs real work.
+
+## Second part: a 36-body board from a vendor CAD file
+
+The Arduino MEGA 2560 Rev3 (built in `D:\桌面文件\workspace\arduino-mega2560\`,
+result: 101.6 x 53.34 mm board, 34 components, 36 separate bodies). Unlike the box
+and the bracket, the geometry was **not invented** - it was converted from the
+vendor's own EAGLE board file, which changes the shape of the whole job: every
+coordinate is given, so the entire risk moves from "is the design right" to "did
+the API do what I asked". Nine more traps came out of it.
+
+### 19. The active document is the user's document, and `doc is None` does not protect you
+
+`doc` (and `session.active()`) is whatever the user last had in front of them. A job
+that began `if doc is None: NewPart` wrote a sketch **into the user's open assembly**
+and left it there - the assembly then had a stray `ProfileFeature` in its tree.
+
+```python
+before = set(session.titles())
+made = call(app, "NewPart")
+d = cast(getv(app, "ActiveDoc"), "IModelDoc2")
+if made is None or d is None or int(getv(d, "GetType")) != 1:   # 1 = swDocPART
+    raise RuntimeError("NewPart did not give me a part")
+log("documents this job opened: %s" % sorted(set(session.titles()) - before))
+```
+
+The mess is recoverable - walk the tree, confirm the stray feature is the only
+`ProfileFeature` at assembly level, `cast(f,"IFeature").Select2(False,0)` then
+`EditDelete` - but `InsertSketch` is a toggle, so an *open* sketch has to be exited
+first (trap 17), which commits it as a feature. Cleaning up is strictly worse than
+checking.
+
+### 20. `SetAddToDB(True)` or the sketch is silently mangled
+
+`IModelDoc2::SetAddToDB(True)` before creating sketch entities, `False` before the
+feature call. Without it SOLIDWORKS' automatic relation inference **deletes arcs and
+merges chains of entities**: a 9-line + 3-arc board outline came out as **9 straight
+lines, 0 arcs**, and the profile area was 48.9 mm² wrong. The signature is
+`GetArcCount() == 0` while `GetSketchContourCount() == 1` and the part still builds.
+
+Always dump what you actually made:
+
+```python
+sk = cast(getv(sm, "ActiveSketch"), "ISketch")
+log("lines=%s arcs=%s contours=%s" % (call(sk, "GetLineCount"),
+    call(sk, "GetArcCount"), call(sk, "GetSketchContourCount")))
+```
+`ISketch::GetLines2(0)` also returns the line endpoints (8 doubles per entity, the
+real ones interleaved with junk - read the ones that look like your coordinates).
+
+### 21. `CreateArc(..., Direction)`: True is counter-clockwise, and the wrong way is a 270° arc
+
+```
+ISketchManager::CreateArc(XC,YC,Zc, X1,Y1,Z1, X2,Y2,Z2, Direction)
+```
+Sketch-local coordinates (the Z arguments are ignored, as everywhere else).
+`Direction=True` walks CCW; if the short arc you want runs CW, SOLIDWORKS takes the
+**major arc** instead. Decide per arc from the sweep of the shorter one:
+
+```python
+a0 = math.atan2(s[1]-c[1], s[0]-c[0]);  a1 = math.atan2(e[1]-c[1], e[0]-c[0])
+sweep = a1 - a0                      # normalise into (-pi, pi]
+forward = sweep > 0
+```
+
+A 20x20 square with one r = 2 corner, extruded 1 mm and measured, settles it:
+chord 398.0000 mm², **convex rounded corner 399.1416 mm²** (the short sweep),
+the other direction 386.5752 mm² (self-intersecting). `399.1416 = 400 - r^2(1 - pi/4)`,
+which is the formula to check against.
+
+**And derive the centre, do not guess it.** For an EAGLE `curve=-90` segment solve for
+the candidate that makes the sweep clockwise. Guessing put the top-left corner's
+centre on the corner point itself ((0, 53.34)) instead of 1 mm inside it
+((1, 52.34)) - a notch instead of a rounded corner - and cost 0.5708 mm², i.e.
+exactly two corner segments. A rounded corner's centre is tangent to *both* adjoining
+edges; if the centre sits on the corner, it is not a rounded corner. And when a
+number is exactly two units of some geometric feature, believe it: the eight possible
+arc-direction combinations for that outline gave 5366.6850 / 5369.8266 / 5372.9682 /
+5376.1098 mm² and **none** of them was the analytic 5373.5390 - which is the proof
+that the *outline definition*, not the arc flags, was wrong.
+
+### 22. Starting a boss away from the sketch plane
+
+* `Flip` does **nothing** for a blind boss on the front plane: `Flip=True` and
+  `Flip=False` both extruded `0 -> +depth` (measured with `GetBodyBox`).
+* The third boolean is *both directions*, not a flip: `Dir=True` gave `-d .. +d`.
+* A **negative depth returns no feature at all** (`None`).
+* The only route that works is the start condition:
+  `FeatureExtrusion3(..., T0=3 /*swStartOffset*/, StartOffset=mm(start), FlipStartOffset=False)`.
+  Verified: `StartOffset=1.6, D1=10` -> a body spanning exactly `z = 1.6 .. 11.6`.
+
+So "board from z = 0 to 1.6, every component from z = 1.6 upwards" needs one offset
+extrusion per component and no reference plane at all. `swStartOffset` is not in the
+stub enums; the raw values are `0 = sketch plane`, `3 = offset`.
+
+### 23. Cuts: make them direction-proof
+
+`FeatureCut4(Sd=False, T1=1, T2=1, ...)` = through-all in **both** directions. It
+cannot miss for want of a sign. `Sd=True, Flip=True` with a blind depth returned
+`None` on this build for a through hole in a 1.6 mm plate.
+
+### 24. One sketch with many contours can fail where each one succeeds
+
+A single sketch holding all 10 header rectangles made `FeatureExtrusion3` return
+`None`, every time; the identical 10 rectangles each in their own sketch+feature all
+built. A 9-rectangle group at another height *did* work, so there is no tidy contour
+limit - treat `None` from a multi-contour sketch as this and split it. Per-component
+features cost more calls and buy a multi-body part, which is usually what the
+downstream assembly wants anyway.
+
+### 25. `merge=False` (multi-body) is also the only way to a watertight STL
+
+Merged, the board's top face carries ~40 inner loops (one per component footprint
+plus the six holes) and SOLIDWORKS' tessellator leaves it open: **641 boundary edges,
+all on z = 1.6**, mesh volume 16 539.875 mm³ against the solid's 18 653.646 (-11 %),
+surface area 13 122 mm² against 17 086 mm². Doc-level `swSTLQuality = Fine`
+(preference 78) had **no effect at all** - byte-identical output.
+
+Multi-body: **0 open boundary edges**, 1 816 triangles, 18 688.460 mm³ against
+18 688.228 (+0.0012 %, the usual inscribed-facet deficit). Edge-use histogram is the
+test: every edge of a closed mesh is used exactly twice, and `3n` must be even
+(1 617 triangles cannot be closed - that parity alone flags it before any geometry).
+
+Multi-body changes the volume bookkeeping, and the check will tell you: a button cap
+sitting inside a switch body contributes its **whole** cylinder (44.11 mm³) instead of
+the 9.65 mm³ that stuck out of a merged model - exactly the +34.58 mm³ the assertion
+reported.
+
+### 26. Clear the selection before every export
+
+A freshly created feature stays selected, and `SaveAs3` exports **only what is
+selected**. Two exports in a row silently wrote one body: STL 200 triangles / STEP
+11 807 bytes instead of 36 bodies / 435 995 bytes, with no error code.
+
+```python
+call(d, "ClearSelection2", True)          # immediately before the export loop
+```
+Verify the STEP by parsing it, not by its size:
+`step_blob.count(b"MANIFOLD_SOLID_BREP") == len(bodies)`.
+
+### 27. `SaveAs3` re-points the document
+
+After `SaveAs3(part.STL)` the open document *is* the STL - a later save would write a
+part file over the mesh. Re-save the part at the end of the export chain. And if the
+target file is already open in the session, `SaveAs3` returns **1**, not 0: close that
+document first (match by exact title) so the job stays re-runnable.
+
+### 28. Renders: the numeric view id beats the name
+
+`ShowNamedView2("*Top", 7)` is the **isometric** view. Passing 7 for every view
+produced three byte-identical PNGs while the log claimed three different views.
+`swFrontView=1`, `swLeftView=3`, `swRightView=4`, `swTopView=5`, `swDimetricView=6`,
+`swIsometricView=7`, `swTrimetricView=8` (from the generated stubs: `enum View`).
+Hash the outputs to prove they differ. And do not try to threshold a `SaveBMP`
+render against its background to measure the model - the background is a gradient,
+not flat white; rasterise the **STL** instead if you want a top view you can trust.
+
+### What this part proves
+
+* Vendor CAD (EAGLE `.brd`) -> a table -> a real solid is a **30-line parser plus this
+  job**; every coordinate is machine-transcribed, and the doc can be generated from
+  the same table so it cannot drift.
+* Offsets, multi-body, through-all cuts and 36 bodies in one part: **demonstrated**,
+  with volume/area/envelope/hole-axis/STEP/STL reconciliation.
+* Still not demonstrated: fillets, revolves, lofts, patterns, assemblies, drawings.
+
+## Process: what this project cost, and how to run the next one
+
+Honest accounting, because the API traps above are only half the lesson.
+
+**Where the time actually went.** Roughly: a third on network dead ends (model sites
+either require a login or are unreachable from this machine), a third on four API
+semantics that a single 20-second probe each would have settled, and a third on real
+work. The expensive mistakes were all *ordering* mistakes, not knowledge gaps.
+
+1. **Never guess a semantics - measure it with the smallest possible part.** The arc
+   direction, the extrusion flip, the start offset and the multi-contour limit each
+   burned several full build/verify cycles because the question was asked of the
+   1 000-line model instead of a 20 mm square. A probe part that builds in 4 seconds
+   answers it once, permanently. Two probes (`probe_corner.py`, `probe_group85.py`)
+   each ended a multi-round argument immediately.
+2. **Look for the vendor's own CAD before hunting a mesh.** One blocked website later,
+   the EAGLE file gave exact outline, holes, footprints, placements *and rotations* -
+   and it parses as XML. A downloaded STL would have been strictly worse (mesh, no
+   datums, unknown provenance).
+3. **Compute the analytic answer first, and assert it.** Five of the bugs found here
+   were found by arithmetic and none by looking at the render: the wrong arc centre
+   (0.5708 mm²), the buried button cap (9.651 mm³), the multi-body volume convention
+   (34.58 mm³), the 11 %-short STL, and the empty exports. Every one of them would
+   have shipped as a plausible-looking model.
+4. **Verify the artifact you actually hand over.** A solid that measures right can
+   still export wrong: the STEP and STL both contained one body out of 36. Parse the
+   exported files - STEP entity counts, STL edge-use histogram and divergence-theorem
+   volume - instead of trusting file size or the export return code.
+5. **Make the job re-runnable before the first retry.** Close the previous document
+   with the same target name, clear the selection, never depend on session state you
+   did not set. The last runs of this job were single 45-second invocations with
+   eleven assertions and no manual steps.
+6. **Write down the trap the moment it costs you something**, with the measured
+   number. Every §19-28 above carries its evidence; the number is what makes the next
+   agent believe it instead of re-testing.
+
