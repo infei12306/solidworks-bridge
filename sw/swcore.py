@@ -63,6 +63,11 @@ STATUS_DIR = os.path.join(HOME, "status")
 SHOTS_DIR = os.path.join(HOME, "shots")
 OUT_DIR = os.path.join(HOME, "out")
 
+# Neutral CAD formats.  On this build OpenDoc6 rejects every one of them with
+# swFileRequiresRepairError, so open_document() retries these with LoadFile4.
+NEUTRAL_EXTS = (".step", ".stp", ".iges", ".igs", ".x_t", ".x_b", ".sat", ".sab",
+                ".jt", ".sldxml", ".3dxml", ".prt", ".catpart")
+
 # HRESULTs worth a human sentence.  Keyed by the signed 32-bit value pywin32 reports.
 HRESULT_HINTS = {
     -2147418111: "SOLIDWORKS is busy and rejected the call (RPC_E_CALL_REJECTED). "
@@ -430,13 +435,42 @@ class Session:
         return cast(doc, "IModelDoc2")
 
     # ---- actions ---------------------------------------------------------
+    def load_neutral(self, path):
+        """Import a neutral-format file with LoadFile4 instead of OpenDoc6.
+
+        Measured on SOLIDWORKS 2025 SP5.0 (33.5.0.53), 2026-09-15: OpenDoc6 refuses
+        EVERY neutral file with errors=2097152 (swFileRequiresRepairError) in ~0.2 s -
+        including a STEP that this same session had just exported, so the file is not
+        the problem and no import preference fixes it (3D Interconnect was already
+        off; CheckAndRepair made no difference).  ISldWorks.LoadFile4 opens the very
+        same file with errors=0.
+
+        Caveat worth knowing before you use the result: LoadFile4 brings a
+        single-solid STEP in as an ASSEMBLY (.SLDASM), with the solid living in the
+        component's part document.  Take that part doc
+        (`cast(comp, "IComponent2").GetModelDoc2()`) and SaveAs3 it if you want a
+        native .SLDPRT.
+        """
+        if not os.path.isfile(path):
+            raise SwError("no such file: %s" % path)
+        doc, (errors,) = call_out(self.app, "LoadFile4", path, "", None, OUTARG)
+        if doc is None:
+            raise SwError(
+                "LoadFile4 returned no document for %s (errors=%s)" % (path, errors),
+                hint="Look the codes up:  swbridge.py enum swFileLoadError")
+        return cast(doc, "IModelDoc2")
+
     def open_document(self, path, doc_type=None, options=None, configuration=""):
         """Open a document silently and CHECK the error out-parameters.
 
         OpenDoc6 signals failure by returning None and stuffing the reason into
         Errors/Warnings ([in,out] VT_BYREF|VT_I4).  They must be collected with
         call_out(), otherwise the failure reason is lost and the caller only sees
-        "it opened nothing"."""
+        "it opened nothing".
+
+        For a neutral format (STEP/IGES/Parasolid/...) a failure from OpenDoc6 is
+        expected on this build and is retried with LoadFile4 - see load_neutral()
+        for the measurement and for the assembly-not-part caveat."""
         L, E = stubs()
         if not os.path.isfile(path):
             raise SwError("no such file: %s" % path)
@@ -449,6 +483,8 @@ class Session:
         doc, (errors, warnings) = call_out(
             self.app, "OpenDoc6", path, doc_type, options, configuration, OUTARG, OUTARG)
         if doc is None:
+            if os.path.splitext(path)[1].lower() in NEUTRAL_EXTS:
+                return self.load_neutral(path)
             raise SwError(
                 "OpenDoc6 returned no document for %s (errors=%s warnings=%s)"
                 % (path, errors, warnings),

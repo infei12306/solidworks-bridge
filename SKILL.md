@@ -207,17 +207,53 @@ example: 50x30x20 mm box → mass properties → save → render.
     `%LOCALAPPDATA%\swbridge\sw\` is a copy, not a clone, and it lags: on
     2026-09-15 it had neither `iter_features` nor `reference_planes` while the repo
     had both. Rule 15 tells you to call a helper the running code may not define.
-    One line at the top of a job is the whole staleness test -
-    `hasattr(swcore, "iter_features")` - and the fix is copying
-    `sw/swcore.py` from the repo over the installed copy.
+    The staleness test is `import swcore` then
+    `hasattr(swcore, "iter_features")` - **`swcore` is not one of the injected
+    names**, so `"swcore" in globals()` is False even on a fresh install and proves
+    nothing. The fix is copying `sw/swcore.py` from the repo over the installed copy.
+31. **`OpenDoc6` cannot open ANY neutral format on this build - use `LoadFile4`.**
+    Measured 2026-09-15 on 2025 SP5.0 (33.5.0.53): `OpenDoc6` returns
+    `errors=2097152` (`swFileRequiresRepairError`) in ~0.2 s for every `.step`/
+    `.stp`/`.iges` tried, **including a STEP that this same session had just
+    exported itself** - so it is not the file, and no import preference fixes it
+    (3D Interconnect was already off, `swImportCheckAndRepair` changed nothing),
+    whereas `app.LoadFile4(path, "", None, OUTARG)` opens the very same file with
+    `errors=0`. Two consequences: a single-solid STEP comes in as an **assembly**
+    (`.SLDASM`) with the solid in the component's part document - reach it with
+    `cast(comp, "IComponent2").GetModelDoc2()` and `SaveAs3` it to get a native
+    `.SLDPRT`; and `cast(d, "IPartDoc")` on the returned doc raises
+    `com_error(-2147352562, 'invalid parameter count')`, which is the tell that you
+    are holding an assembly. `Session.open_document()` now falls back to
+    `load_neutral()` for `NEUTRAL_EXTS`, so plain `open <file.step>` works.
+32. **`getv()` takes a property *name*; a getter with arguments goes through
+    `call()`.** `getv(app, "GetUserPreferenceToggle", 691)` raises
+    `getv() takes 2 positional arguments but 3 were given`. Use
+    `call(app, "GetUserPreferenceToggle", 691)`. Related naming traps on
+    `ISldWorks`, both hit in one job: the integer-preference pair is
+    `GetUserPreferenceIntegerValue` / `SetUserPreferenceIntegerValue` (there is no
+    `...Integer`), while the boolean pair really is
+    `GetUserPreferenceToggle` / `SetUserPreferenceToggle`.
+33. **`SetSaveFlag()` takes no arguments.** `call(doc, "SetSaveFlag", False)` is a
+    `TypeError`; the call *marks the document clean*, which is the point - it is
+    what stops `CloseDoc` raising the "save changes?" modal that never returns
+    (rule 6). `Session.close_document` already does this.
+34. **Decode a numeric SOLIDWORKS error by grepping the stubs - do not guess.**
+    `grep 2097152 %LOCALAPPDATA%\swbridge\stubs\_swconst_gen.py` returns
+    `swFileRequiresRepairError =2097152 # from enum swFileLoadError_e` and names
+    the enum in the same line, which is what turned a 40-line wild-goose chase into
+    one lookup. The generated stubs carry every enum member's value *and* its enum.
 
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-36-body-board-from-a-vendor-cad-file) carries
 traps 19-28 with the measured numbers, and its closing section is the process
 post-mortem (probe before you build, compute the answer first, verify what you hand
 over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
-[tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py) and the MEGA 2560 job at
-`D:\桌面文件\workspace\arduino-mega2560\build_mega.py`.
+[tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py), and two full boards -
+the 36-body Arduino MEGA 2560 at
+`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py` and the 33-body 16-channel
+relay board at `D:\桌面文件\workspace\relay-board\build_relay_board.py` (the latter
+is the one to copy for a new board: layout table at the top, analytic expectations
+next, then build, verify, export, render).
 
 ## Workflows
 
@@ -249,6 +285,23 @@ over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
    `SaveAs3` (then re-save the part, see trap 27) -> parse the exports -> render.
 4. One job, one document. Close a previous document with the same target name at
    the start so the job is re-runnable.
+
+**Bring a vendor STEP/IGES in as a native part**
+1. `Session.load_neutral(path)` (or plain `open <file.step>` - `open_document` now
+   falls back to it). Do **not** fight `OpenDoc6`: on this build it refuses every
+   neutral file with `swFileRequiresRepairError`, including the session's own
+   exports (rule 31).
+2. Expect an **assembly**. Take `cast(comp, "IComponent2").GetModelDoc2()` for the
+   component's part, `cast(part, "IPartDoc").GetBodies2(0, False)` for the bodies,
+   and `SaveAs3` that part to get a real `.SLDPRT`.
+3. Measure the result before you trust it: `GetBodyBox()` per body (metres) gives
+   the envelope, `GetMassProperties2` gives volume/area. Cross-check the envelope
+   against the vendor datasheet - a 3-pin relay that comes in at 19.0 x 15.41 mm
+   says the import is sound.
+4. Reading the STEP text directly is a legitimate second opinion and needs no
+   SOLIDWORKS at all: regex the `CARTESIAN_POINT`s for the envelope, count
+   `MANIFOLD_SOLID_BREP`/`ADVANCED_FACE`/`CYLINDRICAL_SURFACE`, and histogram the
+   Z values to find the seating plane and the pin tips.
 
 **Inspect an assembly the user already has open (read-only)**
 1. Change nothing: no `NewPart`, no feature, no save, no close. Read `doc` (the
@@ -301,6 +354,13 @@ over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
 | STEP/STL far too small, no error reported | Only the selected body was exported (trap 23). |
 | STL not watertight, volume short, all open edges on one plane | Merged model with a many-loop face; rebuild multi-body (trap 24). |
 | Several "different" renders are byte-identical | The numeric view id overrode the view name (trap 28). |
+| `OpenDoc6 ... errors=2097152` on a STEP/IGES | `swFileRequiresRepairError`, and on this build it is *always* this - the importer route is wrong, not the file. Use `LoadFile4` (rule 31). |
+| `com_error(-2147352562, 'invalid parameter count')` right after an import | You cast an imported STEP to `IPartDoc`; `LoadFile4` gave you an assembly (rule 31). |
+| An imported single-solid STEP is titled `.SLDASM` | Same: the solid is in the component's part document (rule 31). |
+| `ISldWorks has no attribute 'GetUserPreferenceInteger'` | It is `GetUserPreferenceIntegerValue` / `SetUserPreferenceIntegerValue` (rule 32). |
+| `getv() takes 2 positional arguments but 3 were given` | `getv` wants a property *name*; a getter with arguments goes through `call` (rule 32). |
+| `SetSaveFlag() takes 1 positional argument but 2 were given` | It takes none (rule 33). |
+| A numeric SOLIDWORKS error code you cannot name | `grep <code> %LOCALAPPDATA%\swbridge\stubs\_swconst_gen.py` - it prints the constant *and* its enum (rule 34). |
 
 Design decisions, the measured numbers, and the full pitfall log:
 [REFERENCE.md](REFERENCE.md).

@@ -10,7 +10,8 @@ verified against the live session.
 |---|---|
 | `tests/jobs/make_box.py` - 50x30x20 mm block | **Complete.** Volume, area, centroid, STL triangle count and render all reconcile. |
 | `tests/jobs/make_bracket.py` - L bracket, 80 + 60 legs, 5 mm plate, 40 mm wide, four 6.5 mm countersunk holes | **Complete.** Volume and surface area match the analytic values to **0.0000 %**, all four hole axes verified from the body, envelope exactly 80 x 60 x 40 mm, STEP + STL + two renders produced. |
-| 36-body Arduino MEGA 2560 Rev3, built from the vendor's own EAGLE board file (`D:\桌面文件\workspace\arduino-mega2560\build_mega.py`) | **Complete.** Board outline area, board volume, whole-part volume, envelope and all six mounting-hole axes match analytic values exactly; STEP carries 36 solids; STL is watertight. See [§ Second part](#second-part-a-36-body-board-from-a-vendor-cad-file). |
+| 36-body Arduino MEGA 2560 Rev3, built from the vendor's own EAGLE board file (`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py`) | **Complete.** Board outline area, board volume, whole-part volume, envelope and all six mounting-hole axes match analytic values exactly; STEP carries 36 solids; STL is watertight. See [§ Second part](#second-part-a-36-body-board-from-a-vendor-cad-file). |
+| 33-body 16-channel 12 V relay board, dimensions triangulated from four sources because no vendor CAD exists (`D:\桌面文件\workspace\relay-board\build_relay_board.py`) | **Complete for the modelled scope.** PCB volume and total volume match analytic to **0.0000 %**, 33 bodies, envelope exactly 179 x 90 x 16.6 mm, 4/4 mounting-hole rims found on the body, STEP carries 33 solids, STL watertight (1012 triangles, 0 open edges). One section - the input/control end - is deliberately left open and documented. See [§ Third part](#third-part-a-33-body-relay-board-where-the-input-had-to-be-reconstructed). |
 
 The bracket job asserts at every step, so a wrong intermediate state fails loudly
 instead of leaving a part that merely looks finished. It took four failed routes
@@ -318,6 +319,101 @@ not flat white; rasterise the **STL** instead if you want a top view you can tru
 * Offsets, multi-body, through-all cuts and 36 bodies in one part: **demonstrated**,
   with volume/area/envelope/hole-axis/STEP/STL reconciliation.
 * Still not demonstrated: fillets, revolves, lofts, patterns, assemblies, drawings.
+
+## Third part: a 33-body relay board where the *input* had to be reconstructed
+
+Same recipe, different failure mode - here the vendor CAD did not exist and the
+dimensions had to be argued from four independent sources before a single feature
+was built. Job: `D:\桌面文件\workspace\relay-board\build_relay_board.py`. Made in one
+58-second run, first attempt, every assertion at 0.0000 % - because the geometry was
+settled *before* SOLIDWORKS was opened.
+
+### 31. `OpenDoc6` refuses every neutral file on this build; `LoadFile4` takes them
+
+The trap that cost the most, and the one worth remembering, because its symptom
+points at the wrong culprit:
+
+```
+OpenDoc6(any .step, ...) -> doc=None, errors=2097152  in ~0.2 s
+```
+
+`2097152` is `swFileRequiresRepairError`, which reads like "your file is corrupt".
+It is not. The same session exported a STEP itself and could not reopen it. The
+test that settles it in one call is to round-trip your *own* export before blaming
+the download:
+
+```python
+self_test = export_a_box_to_step()
+OpenDoc6(self_test, ...)      # errors=2097152 again -> it is the route, not the file
+```
+
+`ISldWorks.LoadFile4(path, "", None, OUTARG)` opens it with `errors=0`. What makes
+this one *stick* rather than just annoy is the second-order effect: `LoadFile4`
+returns a single-solid STEP as an **assembly**, so `cast(doc, "IPartDoc")` raises
+`com_error(-2147352562, 'invalid parameter count')` and the body count comes back
+as nonsense. Take the component's part document instead:
+
+```python
+comp = as_list(cast(asm, "IAssemblyDoc").GetComponents(True))[0]
+part = cast(cast(comp, "IComponent2").GetModelDoc2(), "IModelDoc2")
+bodies = as_list(cast(part, "IPartDoc").GetBodies2(0, False))
+call(part, "SaveAs3", out_sldprt, 0, E.swSaveAsOptions_Silent)   # now a native part
+```
+
+Measured on top of that: enabling `swImportCheckAndRepair`, disabling
+`swImportAutoRunImportDiagnostics` and setting `swImportNeutralAssemblyStructureMapping`
+to "multibody part" all changed **nothing**; 3D Interconnect was already off.
+
+### 32. Decode the error code from the generated stubs instead of guessing
+
+```
+grep 2097152 %LOCALAPPDATA%\swbridge\stubs\_swconst_gen.py
+2419: swFileCriticalDataRepairError =4194304  # from enum swFileLoadError_e
+2421: swFileRequiresRepairError     =2097152  # from enum swFileLoadError_e
+```
+
+One grep named the constant *and* the enum, and turned a 40-line hunt into a
+lookup. The generated stubs carry every enum member with its value and origin -
+use them as the dictionary they are.
+
+### 33. Two naming traps on `ISldWorks`, both hit inside one job
+
+* `GetUserPreferenceInteger` / `SetUserPreferenceInteger` **do not exist**; the pair
+  is `GetUserPreferenceIntegerValue` / `SetUserPreferenceIntegerValue`. The boolean
+  pair really is `GetUserPreferenceToggle` / `SetUserPreferenceToggle`, so the
+  symmetry you would assume is wrong in exactly one place.
+* `getv()` takes a property **name**; a getter that takes an argument must go
+  through `call()`:
+  `getv(app, "GetUserPreferenceToggle", 691)` is a `TypeError`, `call(app, ...)`
+  works. `getv` only covers property-or-zero-arg-method reads.
+* `SetSaveFlag()` takes **no** arguments. It marks the document clean, which is the
+  whole reason `CloseDoc` does not open a modal (rule 6).
+
+### 34. When there is no vendor CAD, triangulate the dimensions and say so
+
+No free model of this board exists anywhere (109 open-source repos, every CAD
+library, two paid sites - all checked, all documented in the workspace README).
+What replaced it was four sources that agree, each checkable:
+
+| number | source | how it was checked |
+|---|---|---|
+| board 179 x 90 x 19 mm | the seller's product drawing | quoted, not derived |
+| relay 19.00 x 15.41 mm | the *relay's* vendor STEP | regex the `CARTESIAN_POINT`s offline - no SOLIDWORKS needed |
+| relay 19.2 x 15.4 mm | LCSC package name + Hongfa datasheet | two more independent statements |
+| terminal pitch 5.08 mm | standard part | photo measurement: screw centres at 211 / 281 / 350 px, gaps 70 and 69 px |
+
+The photo measurement is worth keeping because it went wrong first and the fix was
+to *stop asking a vision model to count*: three runs at "how many relays" gave 5, 7
+and 8. Detecting the screw heads as luminance plateaus (three flat tops at ~250,
+33 px wide, 69.5 px apart) gave a number good to a pixel, and it is what showed the
+board runs off the right edge of the frame. **Use the photo for ratios between known
+parts; never ask a model to count things.**
+
+One residual that stays open and is written down rather than hidden: the relay is
+modelled as its exact envelope box, not its imported solid, because the importer
+returns an assembly and 16 copies of a 291-face body is the wrong trade for a
+wiring-harness part. The imported native part is delivered alongside so the choice
+is the user's, not silently made for them.
 
 ## Process: what this project cost, and how to run the next one
 
