@@ -38,7 +38,7 @@ whether a session can be attached.
 | Report the session | `attach [--verbose]` |
 | Start SOLIDWORKS | `launch [--wait 240]` |
 | **Run code** | `run --file job.py` or `run --code "..."` |
-| Slow job, return at once | `run --code "..." --async` �?then `status --id <id>` |
+| Slow job, return at once | `run --code "..." --async` → then `status --id <id>` |
 | Open a document | `open <file.sldprt>` |
 | Summarise the active doc | `info` |
 | Export, verified | `save <path> --as step\|stl\|iges\|pdf\|x_t\|3mf` |
@@ -59,7 +59,7 @@ classes) · `E` (8199 constants) · `cast` · `getv` · `call` · `call_out` ·
 `OUTARG` · `retry` · `OUT` (write your outputs here) · `HOME` · `log`
 
 [scripts/../../tests/jobs/make_box.py](../tests/jobs/make_box.py) is a worked
-example: 50x30x20 mm box �?mass properties �?save �?render.
+example: 50x30x20 mm box → mass properties → save → render.
 
 ## Hard rules
 
@@ -242,16 +242,50 @@ example: 50x30x20 mm box �?mass properties �?save �?render.
     `swFileRequiresRepairError =2097152 # from enum swFileLoadError_e` and names
     the enum in the same line, which is what turned a 40-line wild-goose chase into
     one lookup. The generated stubs carry every enum member's value *and* its enum.
+35. **Look for a pad/pin table in the source before you measure a single pin.**
+    The MEGA's 102 header pins came out of the EAGLE `.brd` for free - the file
+    carries each pad's local `(x, y)` next to the element's placement and rotation,
+    so absolute coordinates fall out of the same `rot_pt()` already used for the
+    package boxes. EAGLE pads, KiCad footprints, IDF/EMN, Gerber plus
+    pick-and-place, most vendor STEP files and every datasheet's recommended PCB
+    layout carry one too. Only fall back to measuring a photo when none does.
+36. **One solid per pin: build the posts, do not cut the block.** A cut *can* do it
+    (SOLIDWORKS splits a body when a cut severs it), but a through-all cut from the
+    front plane also slits the PCB - it has to be a blind cut starting on the PCB
+    top face, `T0=3` + `StartOffset=1.6`, rule 22 again - and a cut really removes
+    the groove material, so the analytic total becomes "block minus grooves".
+    Post size = **pitch minus a gap** (`2.54-0.5=2.04`, `5.08-0.6=4.48`) so
+    neighbours cannot touch. Move the volume bookkeeping with it: the block volume
+    leaves `COMP_VOL` and the posts' sum enters as `PIN_VOL`, or the total check
+    fails by exactly the difference.
+37. **Run the overlap check over every solid, not just the fiddly ones.** Place
+    parts by formula and a collision is invisible in a render until it is baked in.
+    O(n²) over footprints costs nothing (4 186 pairs for 92 boxes, 7 875 for 126)
+    and has already caught a real one. Keep a documented exception list rather than
+    weakening the check.
+38. **A generated document that hardcodes numbers will drift.** `make_readme.py`
+    carried "36 个实体" and "34 个元件盒表" as literals plus a stale path, and was
+    wrong in six places after the pin split while still reading plausibly. Derive
+    every count and volume from the same table the model is built from, through a
+    placeholder - never type a body count into prose.
+39. **This repo's docs are UTF-8 and PowerShell will silently corrupt them.**
+    `(Get-Content x.md -Raw) -replace ... | Set-Content x.md` rewrites them in the
+    console's ANSI codepage: `SKILL.md` came back UTF-16LE and `MODELING.md` GBK,
+    both committed and pushed, and `git diff` showed only the intended 3 lines.
+    Use the `edit` tool for every text change. To check, and to find the last good
+    revision: `git show <rev>:SKILL.md | python -c "import sys; sys.stdin.buffer.read().decode('utf-8')"`.
 
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
-[second part](MODELING.md#second-part-a-36-body-board-from-a-vendor-cad-file) carries
-traps 19-28 with the measured numbers, and its closing section is the process
+[second part](MODELING.md#second-part-a-128-body-board-from-a-vendor-cad-file) carries
+traps 19-28 with the measured numbers, its
+[fourth part](MODELING.md#fourth-part-per-pin-bodies-out-of-pad-data) is per-pin
+bodies, and its closing section is the process
 post-mortem (probe before you build, compute the answer first, verify what you hand
 over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
 [tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py), and two full boards -
-the 36-body Arduino MEGA 2560 at
+the 128-body Arduino MEGA 2560 (102 header pins, one solid each) at
 `D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py` and the 93-body 16-channel
-relay board at `D:\桌面文件\workspace\relay-board\build_relay_board.py` (the latter
+relay board (70 pins) at `D:\桌面文件\workspace\relay-board\build_relay_board.py` (the latter
 is the one to copy for a new board: layout table at the top, analytic expectations
 next, then build, verify, export, render).
 
@@ -286,6 +320,18 @@ next, then build, verify, export, render).
 4. One job, one document. Close a previous document with the same target name at
    the start so the job is re-runnable.
 
+**Give every connector position its own body (for 3D harness work)**
+1. Look for a pad/pin table in the source first (rule 35). If there is one, add a
+   `HEADER_PINS` table beside the component boxes - same generator, same rotation
+   helper - and delete the header packages from the box table.
+2. Size the post as pitch minus a gap so neighbours cannot touch, and move the
+   volume bookkeeping with it (rule 36). Assert the pin count you expect.
+3. Build one sketch+extrude per pin with `merge=False`; measure the total and the
+   body count against the analytic values.
+4. Run the pairwise overlap check over **all** footprints (rule 37).
+5. Re-derive the documentation from the tables instead of editing the prose
+   (rule 38).
+
 **Bring a vendor STEP/IGES in as a native part**
 1. `Session.load_neutral(path)` (or plain `open <file.step>` - `open_document` now
    falls back to it). Do **not** fight `OpenDoc6`: on this build it refuses every
@@ -310,9 +356,11 @@ next, then build, verify, export, render).
    `Reference`, and the mate folder is the `MateGroup` (its name is `配合` on a
    Chinese UI). Take its children with `GetFirstSubFeature`/`GetNextSubFeature`,
    casting each to `IFeature`.
-3. Per component: `cast(comp, "IComponent2")` �?`Name2`, `IsFixed`,
+3. Per component: `cast(comp, "IComponent2")` → `Name2`, `IsFixed`,
    `GetConstrainedStatus`, `GetPathName`, and `GetXform` for the placement.
-4. Per mate: `GetSpecificFeature2` �?`cast(..., "IMate2")` �?   `GetMateEntityCount`/`MateEntity(k)` �?`cast(..., "IMateEntity2")` �?   `ReferenceComponent` (cast to `IComponent2` for the name). `IMateEntity2`
+4. Per mate: `GetSpecificFeature2` → `cast(..., "IMate2")` →
+   `GetMateEntityCount`/`MateEntity(k)` → `cast(..., "IMateEntity2")` →
+   `ReferenceComponent` (cast to `IComponent2` for the name). `IMateEntity2`
    exposes `Reference` but **not** `Entity`/`EntityType`, so the face/edge a mate
    uses is not directly readable - report the component pairs and be explicit that
    the DOF count is inferred, or read `GetConstrainedStatus` instead of guessing.
@@ -321,8 +369,8 @@ next, then build, verify, export, render).
    the job's `log()` output is not always surfaced, a file on disk always is.
 
 **Something is stuck**
-1. `status --id <id>` �?`RUNNING` with a flat log means the call never returned.
-2. `dialogs` �?is there a MODAL window?
+1. `status --id <id>` → `RUNNING` with a flat log means the call never returned.
+2. `dialogs` → is there a MODAL window?
 3. `dismiss --handle <h>` (or no handle: it picks the modal one), then `status`
    again.
 4. If the session itself looks broken, `attach` and `doctor` are read-only and
@@ -359,6 +407,8 @@ next, then build, verify, export, render).
 | `getv() takes 2 positional arguments but 3 were given` | `getv` wants a property *name*; a getter with arguments goes through `call` (rule 32). |
 | `SetSaveFlag() takes 1 positional argument but 2 were given` | It takes none (rule 33). |
 | A numeric SOLIDWORKS error code you cannot name | `grep <code> %LOCALAPPDATA%\swbridge\stubs\_swconst_gen.py` - it prints the constant *and* its enum (rule 34). |
+| Total volume is off by exactly the difference between a block and its pins | You split a part into per-pin solids but left the old block volume in the analytic sum (rule 36). |
+| A doc in this repo shows as binary / refuses to decode | PowerShell `Get-Content \| Set-Content` re-encoded it. Find the last good revision and redo the edit with the `edit` tool (rule 39). |
 
 Design decisions, the measured numbers, and the full pitfall log:
 [REFERENCE.md](REFERENCE.md).

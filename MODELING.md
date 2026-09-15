@@ -10,8 +10,8 @@ verified against the live session.
 |---|---|
 | `tests/jobs/make_box.py` - 50x30x20 mm block | **Complete.** Volume, area, centroid, STL triangle count and render all reconcile. |
 | `tests/jobs/make_bracket.py` - L bracket, 80 + 60 legs, 5 mm plate, 40 mm wide, four 6.5 mm countersunk holes | **Complete.** Volume and surface area match the analytic values to **0.0000 %**, all four hole axes verified from the body, envelope exactly 80 x 60 x 40 mm, STEP + STL + two renders produced. |
-| 36-body Arduino MEGA 2560 Rev3, built from the vendor's own EAGLE board file (`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py`) | **Complete.** Board outline area, board volume, whole-part volume, envelope and all six mounting-hole axes match analytic values exactly; STEP carries 36 solids; STL is watertight. See [§ Second part](#second-part-a-36-body-board-from-a-vendor-cad-file). |
-| 93-body 16-channel 12 V relay board, dimensions triangulated from a flat vendor photo because no vendor CAD exists (`D:\桌面文件\workspace\relay-board\build_relay_board.py`) | **Complete for the modelled scope.** PCB volume and total volume match analytic to **0.0000 %**, 93 bodies, envelope exactly 179 x 90 x 16.6 mm, 70 individually-bodied pins asserted (48 relay outputs + 20 input header + 2 power poles), control parts proven non-overlapping and inside their strip, 4/4 mounting-hole rims found on the body, STEP carries 41 solids, STL watertight (2100 triangles, 0 open edges). See [§ Third part](#third-part-a-41-body-relay-board-where-the-input-had-to-be-reconstructed). |
+| 128-body Arduino MEGA 2560 Rev3, built from the vendor's own EAGLE board file (`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py`) | **Complete.** Board outline area, board volume, whole-part volume, envelope and all six mounting-hole axes match analytic values exactly; **102 header pins pulled straight from the EAGLE pads, one solid each**; 126 footprints checked pairwise for overlap; STEP carries 128 solids; STL is watertight. See [§ Second part](#second-part-a-128-body-board-from-a-vendor-cad-file) and [§ Fourth part](#fourth-part-per-pin-bodies-out-of-pad-data). |
+| 93-body 16-channel 12 V relay board, dimensions triangulated from a flat vendor photo because no vendor CAD exists (`D:\桌面文件\workspace\relay-board\build_relay_board.py`) | **Complete for the modelled scope.** PCB volume and total volume match analytic to **0.0000 %**, 93 bodies, envelope exactly 179 x 90 x 16.6 mm, **70 individually-bodied pins asserted** (48 relay outputs + 20 input header + 2 power poles), all 92 boxes checked pairwise for overlap (4186 pairs), 4/4 mounting-hole rims found on the body, STEP carries 93 solids, STL watertight (2100 triangles, 0 open edges). See [§ Third part](#third-part-a-93-body-relay-board-where-the-input-had-to-be-reconstructed). |
 
 The bracket job asserts at every step, so a wrong intermediate state fails loudly
 instead of leaving a part that merely looks finished. It took four failed routes
@@ -127,7 +127,7 @@ Two further lessons came out of this:
   attempts were wasted that way; the job now exits any active sketch before
   starting a new one, and says so in the log.
 * **The reconciliation caught my arithmetic, not the geometry.** The first
-  successful build was reported as wrong (+1.43 % volume, �?.75 % area) because
+  successful build was reported as wrong (+1.43 % volume, −1.75 % area) because
   the expectation counted a full-thickness bore *plus* a full cone frustum, double
   counting the 2.75 mm the countersink replaces. Fixing the expectation moved both
   errors to **0.0000 %**. A check that can only ever blame the model is a check
@@ -156,14 +156,16 @@ Two further lessons came out of this:
   largely solved by the checks in `make_bracket.py`; (a) has a working pattern
   now; (b) is where each new part type costs real work.
 
-## Second part: a 36-body board from a vendor CAD file
+## Second part: a 128-body board from a vendor CAD file
 
-The Arduino MEGA 2560 Rev3 (built in `D:\桌面文件\workspace\arduino-mega2560\`,
-result: 101.6 x 53.34 mm board, 34 components, 36 separate bodies). Unlike the box
+The Arduino MEGA 2560 Rev3 (built in `D:\桌面文件\车架复刻交付\arduino-mega2560\`,
+result: 101.6 x 53.34 mm board, 24 lumped components + 102 individual header pins +
+the reset button = 128 separate bodies). Unlike the box
 and the bracket, the geometry was **not invented** - it was converted from the
 vendor's own EAGLE board file, which changes the shape of the whole job: every
 coordinate is given, so the entire risk moves from "is the design right" to "did
-the API do what I asked". Nine more traps came out of it.
+the API do what I asked". Nine more traps came out of it; the header pins were
+split out later, see [§ Fourth part](#fourth-part-per-pin-bodies-out-of-pad-data).
 
 ### 19. The active document is the user's document, and `doc is None` does not protect you
 
@@ -320,7 +322,7 @@ not flat white; rasterise the **STL** instead if you want a top view you can tru
   with volume/area/envelope/hole-axis/STEP/STL reconciliation.
 * Still not demonstrated: fillets, revolves, lofts, patterns, assemblies, drawings.
 
-## Third part: a 41-body relay board where the *input* had to be reconstructed
+## Third part: a 93-body relay board where the *input* had to be reconstructed
 
 Same recipe, different failure mode - here the vendor CAD did not exist and the
 dimensions had to be argued from four independent sources before a single feature
@@ -432,7 +434,9 @@ The control end's *content* is now measured rather than guessed - the seller's p
 shows a 2x10 input header (two pin columns, 10 pairs, silk `IN1`-`IN16` then `DC-` /
 `DC+` / `DC+`, and the body measures 25.1 mm = 9 x 2.54 + 2.54, which only a 2x10
 fits), two DIP-18 line drivers (measured 22.6 mm, and a DIP-18 body is 22.86 mm), a
-2-pole power block and two electrolytic cans. The build asserts 48 + 20 + 2 terminals.
+2-pole power block and two electrolytic cans. The build asserts 48 + 20 + 2 = 70
+separate pin solids; see [§ Fourth part](#fourth-part-per-pin-bodies-out-of-pad-data)
+for why they are built rather than cut.
 
 The overlap assertion earned its keep: the first run with the new control layout
 aborted on `control parts CTRL_OPTO_A and CTRL_PWR_TERM overlap` before writing
@@ -445,6 +449,74 @@ modelled as its exact envelope box, not its imported solid, because the importer
 returns an assembly and 16 copies of a 291-face body is the wrong trade for a
 wiring-harness part. The imported native part is delivered alongside so the choice
 is the user's, not silently made for them.
+
+## Fourth part: per-pin bodies out of pad data
+
+Both boards ended up wanting the same thing - **every connector position its own
+solid**, so the harness can attach a connection point and a wire to each. The two
+cases were nothing alike in effort, and the difference is the whole lesson.
+
+### 35. Check whether the source already has a pad list before you measure anything
+
+The MEGA's 102 header pins cost **zero measurement**: the EAGLE `.brd` carries every
+pad's local `(x, y)` next to each element's placement and rotation, so absolute pin
+coordinates fall out of the same `rot_pt()` helper that was already turning package
+boxes into board coordinates. `gen_table.py` grew ~15 lines and now emits
+
+```
+COMPONENTS  : 24 lumped parts  (name, x0, y0, x1, y1, h)
+HEADER_PINS : 102 pins         (element, pad, x, y, h)
+```
+
+The relay board is the contrast: no vendor CAD exists, so its 70 pin positions had
+to be argued from a photo (5.08 mm and 2.54 mm are standard pitches, the footprints
+were measured, the control end's pin *count* came off the seller's wiring diagram).
+Same outcome, hours apart.
+
+**Before estimating any pin position, look for a pad/pin table in the source.**
+EAGLE pads, KiCad footprints, IDF/EMN, Gerber plus pick-and-place, and most vendor
+STEP files all carry one; a data sheet's recommended PCB layout does too.
+
+### 36. One body per pin: build the posts, do not cut the block
+
+Asked whether a single extruded cut could split all the pins out at once: **yes, in
+principle** - SOLIDWORKS splits one solid into several bodies when a cut severs the
+material completely, so one sketch holding every separating groove plus one
+`FeatureCut4` would do it. Two reasons it is the wrong route here:
+
+1. **A through-all cut from the front plane also slits the PCB underneath.** It has
+   to be a blind cut starting on the PCB's top face (`T0=3` + `StartOffset=1.6`),
+   which is trap 22 again - and now you are betting on a cut direction instead of a
+   boss direction.
+2. **A cut really removes material**, exactly the groove volume, so the analytic
+   total becomes "block volume minus grooves". Building the posts omits the same
+   material while keeping the sum trivially exact.
+
+Size the post as **pitch minus a gap** so neighbours cannot touch: `2.54 - 0.5 =
+2.04` on 0.1 in headers, `5.08 - 0.6 = 4.48` on the relay terminals. Then move the
+volume bookkeeping with it - the old block volume leaves `COMP_VOL` and the posts'
+sum enters as `PIN_VOL`. Forget that step and the total-volume assertion fails by
+exactly the difference, which is the assertion doing its job.
+
+### 37. Run the overlap check over every solid, not just the fiddly ones
+
+Once parts are placed independently by formula, a collision is invisible in a render
+until it is baked in. The check is O(n²) over footprints and costs nothing: 4 186
+pairs on the relay board's 92 boxes, 7 875 on the MEGA's 126. It has already paid
+for itself - the relay board's first run with the new control layout aborted on
+`CTRL_OPTO_A and CTRL_PWR_TERM overlap` before writing a single file.
+
+Keep one documented exception rather than weakening the check: the MEGA's reset
+actuator is a cylinder standing inside the switch body on purpose.
+
+### 38. A generated document that hardcodes numbers will drift
+
+`make_readme.py` had "36 个实体" and "34 个元件盒表" as literals in a template, plus
+the previous workspace path. After the pin split it was wrong in six places while
+still looking perfectly plausible. Derive every count and volume from the same table
+the model is built from and pass it through a placeholder - the MEGA README now
+computes its own body count (128), pin count (102) and volumes, so it cannot be
+right about the geometry and wrong about the summary.
 
 ## Process: what this project cost, and how to run the next one
 
