@@ -11,7 +11,7 @@ verified against the live session.
 | `tests/jobs/make_box.py` - 50x30x20 mm block | **Complete.** Volume, area, centroid, STL triangle count and render all reconcile. |
 | `tests/jobs/make_bracket.py` - L bracket, 80 + 60 legs, 5 mm plate, 40 mm wide, four 6.5 mm countersunk holes | **Complete.** Volume and surface area match the analytic values to **0.0000 %**, all four hole axes verified from the body, envelope exactly 80 x 60 x 40 mm, STEP + STL + two renders produced. |
 | 36-body Arduino MEGA 2560 Rev3, built from the vendor's own EAGLE board file (`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py`) | **Complete.** Board outline area, board volume, whole-part volume, envelope and all six mounting-hole axes match analytic values exactly; STEP carries 36 solids; STL is watertight. See [§ Second part](#second-part-a-36-body-board-from-a-vendor-cad-file). |
-| 33-body 16-channel 12 V relay board, dimensions triangulated from four sources because no vendor CAD exists (`D:\桌面文件\workspace\relay-board\build_relay_board.py`) | **Complete for the modelled scope.** PCB volume and total volume match analytic to **0.0000 %**, 33 bodies, envelope exactly 179 x 90 x 16.6 mm, 4/4 mounting-hole rims found on the body, STEP carries 33 solids, STL watertight (1012 triangles, 0 open edges). One section - the input/control end - is deliberately left open and documented. See [§ Third part](#third-part-a-33-body-relay-board-where-the-input-had-to-be-reconstructed). |
+| 39-body 16-channel 12 V relay board, dimensions triangulated from four sources because no vendor CAD exists (`D:\桌面文件\workspace\relay-board\build_relay_board.py`) | **Complete for the modelled scope.** PCB volume and total volume match analytic to **0.0000 %**, 39 bodies, envelope exactly 179 x 90 x 16.6 mm, 68 terminals asserted (48 relay outputs + 16 control inputs + 4 power poles), control parts proven non-overlapping and inside their strip, 4/4 mounting-hole rims found on the body, STEP carries 39 solids, STL watertight (1272 triangles, 0 open edges). The control-end *positions* are proportional estimates and are documented as such. See [§ Third part](#third-part-a-39-body-relay-board-where-the-input-had-to-be-reconstructed). |
 
 The bracket job asserts at every step, so a wrong intermediate state fails loudly
 instead of leaving a part that merely looks finished. It took four failed routes
@@ -320,13 +320,24 @@ not flat white; rasterise the **STL** instead if you want a top view you can tru
   with volume/area/envelope/hole-axis/STEP/STL reconciliation.
 * Still not demonstrated: fillets, revolves, lofts, patterns, assemblies, drawings.
 
-## Third part: a 33-body relay board where the *input* had to be reconstructed
+## Third part: a 39-body relay board where the *input* had to be reconstructed
 
 Same recipe, different failure mode - here the vendor CAD did not exist and the
 dimensions had to be argued from four independent sources before a single feature
 was built. Job: `D:\桌面文件\workspace\relay-board\build_relay_board.py`. Made in one
-58-second run, first attempt, every assertion at 0.0000 % - because the geometry was
+61-second run, first attempt, every assertion at 0.0000 % - because the geometry was
 settled *before* SOLIDWORKS was opened.
+
+The one thing that had to be redone is instructive: the first build used a channel
+pitch of 19.25 mm, derived by *assuming* eight channels spanned most of the 179 mm
+board. Measuring the actual silk dividers between channels (176 / 412 / 657 / 902 /
+1148 / 1397 / 1648 / 1901 px, median pitch 247.8 px) and pinning the scale with two
+independent anchors gave **18.19 mm**, which moved the array's end from 154.5 to
+152.3 mm and left a 26.7 mm control strip instead of 24.5 mm. **Measure the repeating
+feature; never derive a pitch from "it has to fill the board".** The ratio check that
+catches it is trivial once you have the number: a 15.41 mm relay on a 19.25 mm pitch
+leaves a 3.8 mm gap, and the photo shows a gap - so the wrong pitch looked fine. What
+exposed it was that the *dividers* and the *relay bodies* disagreed.
 
 ### 31. `OpenDoc6` refuses every neutral file on this build; `LoadFile4` takes them
 
@@ -401,6 +412,7 @@ What replaced it was four sources that agree, each checkable:
 | relay 19.00 x 15.41 mm | the *relay's* vendor STEP | regex the `CARTESIAN_POINT`s offline - no SOLIDWORKS needed |
 | relay 19.2 x 15.4 mm | LCSC package name + Hongfa datasheet | two more independent statements |
 | terminal pitch 5.08 mm | standard part | photo measurement: screw centres at 211 / 281 / 350 px, gaps 70 and 69 px |
+| channel pitch 18.19 mm | silk dividers between channels | 8 dividers, median pitch 247.8 px, cross-checked against the relay width |
 
 The photo measurement is worth keeping because it went wrong first and the fix was
 to *stop asking a vision model to count*: three runs at "how many relays" gave 5, 7
@@ -408,6 +420,15 @@ and 8. Detecting the screw heads as luminance plateaus (three flat tops at ~250,
 33 px wide, 69.5 px apart) gave a number good to a pixel, and it is what showed the
 board runs off the right edge of the frame. **Use the photo for ratios between known
 parts; never ask a model to count things.**
+
+The right-hand 11.6 mm of the board is outside the frame and the rest of that end is
+behind a cable bundle, so the control section's *positions* are proportional
+estimates. What is not estimated is its content: the pin counts come from the
+seller's own wiring diagram (`1-16路IN端` = 16 inputs, plus four labelled power
+poles), and the build asserts 48 + 16 + 4 terminals and that the six control solids
+neither overlap each other nor leave their strip. **When only the function is known,
+model the function and say so - do not quietly invent a layout and present it as
+measured.**
 
 One residual that stays open and is written down rather than hidden: the relay is
 modelled as its exact envelope box, not its imported solid, because the importer
