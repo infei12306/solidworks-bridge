@@ -250,7 +250,7 @@ post-mortem (probe before you build, compute the answer first, verify what you h
 over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
 [tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py), and two full boards -
 the 36-body Arduino MEGA 2560 at
-`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py` and the 41-body 16-channel
+`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py` and the 93-body 16-channel
 relay board at `D:\桌面文件\workspace\relay-board\build_relay_board.py` (the latter
 is the one to copy for a new board: layout table at the top, analytic expectations
 next, then build, verify, export, render).

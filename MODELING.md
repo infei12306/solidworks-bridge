@@ -11,7 +11,7 @@ verified against the live session.
 | `tests/jobs/make_box.py` - 50x30x20 mm block | **Complete.** Volume, area, centroid, STL triangle count and render all reconcile. |
 | `tests/jobs/make_bracket.py` - L bracket, 80 + 60 legs, 5 mm plate, 40 mm wide, four 6.5 mm countersunk holes | **Complete.** Volume and surface area match the analytic values to **0.0000 %**, all four hole axes verified from the body, envelope exactly 80 x 60 x 40 mm, STEP + STL + two renders produced. |
 | 36-body Arduino MEGA 2560 Rev3, built from the vendor's own EAGLE board file (`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py`) | **Complete.** Board outline area, board volume, whole-part volume, envelope and all six mounting-hole axes match analytic values exactly; STEP carries 36 solids; STL is watertight. See [§ Second part](#second-part-a-36-body-board-from-a-vendor-cad-file). |
-| 41-body 16-channel 12 V relay board, dimensions triangulated from a flat vendor photo because no vendor CAD exists (`D:\桌面文件\workspace\relay-board\build_relay_board.py`) | **Complete for the modelled scope.** PCB volume and total volume match analytic to **0.0000 %**, 41 bodies, envelope exactly 179 x 90 x 16.6 mm, 70 terminals asserted (48 relay outputs + 20 input header + 2 power poles), control parts proven non-overlapping and inside their strip, 4/4 mounting-hole rims found on the body, STEP carries 41 solids, STL watertight (1476 triangles, 0 open edges). See [§ Third part](#third-part-a-41-body-relay-board-where-the-input-had-to-be-reconstructed). |
+| 93-body 16-channel 12 V relay board, dimensions triangulated from a flat vendor photo because no vendor CAD exists (`D:\桌面文件\workspace\relay-board\build_relay_board.py`) | **Complete for the modelled scope.** PCB volume and total volume match analytic to **0.0000 %**, 93 bodies, envelope exactly 179 x 90 x 16.6 mm, 70 individually-bodied pins asserted (48 relay outputs + 20 input header + 2 power poles), control parts proven non-overlapping and inside their strip, 4/4 mounting-hole rims found on the body, STEP carries 41 solids, STL watertight (2100 triangles, 0 open edges). See [§ Third part](#third-part-a-41-body-relay-board-where-the-input-had-to-be-reconstructed). |
 
 The bracket job asserts at every step, so a wrong intermediate state fails loudly
 instead of leaving a part that merely looks finished. It took four failed routes
@@ -127,7 +127,7 @@ Two further lessons came out of this:
   attempts were wasted that way; the job now exits any active sketch before
   starting a new one, and says so in the log.
 * **The reconciliation caught my arithmetic, not the geometry.** The first
-  successful build was reported as wrong (+1.43 % volume, −1.75 % area) because
+  successful build was reported as wrong (+1.43 % volume, �?.75 % area) because
   the expectation counted a full-thickness bore *plus* a full cone frustum, double
   counting the 2.75 mm the countersink replaces. Fixing the expectation moved both
   errors to **0.0000 %**. A check that can only ever blame the model is a check
