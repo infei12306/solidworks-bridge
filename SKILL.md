@@ -38,7 +38,7 @@ whether a session can be attached.
 | Report the session | `attach [--verbose]` |
 | Start SOLIDWORKS | `launch [--wait 240]` |
 | **Run code** | `run --file job.py` or `run --code "..."` |
-| Slow job, return at once | `run --code "..." --async` → then `status --id <id>` |
+| Slow job, return at once | `run --code "..." --async` �?then `status --id <id>` |
 | Open a document | `open <file.sldprt>` |
 | Summarise the active doc | `info` |
 | Export, verified | `save <path> --as step\|stl\|iges\|pdf\|x_t\|3mf` |
@@ -59,7 +59,7 @@ classes) · `E` (8199 constants) · `cast` · `getv` · `call` · `call_out` ·
 `OUTARG` · `retry` · `OUT` (write your outputs here) · `HOME` · `log`
 
 [scripts/../../tests/jobs/make_box.py](../tests/jobs/make_box.py) is a worked
-example: 50x30x20 mm box → mass properties → save → render.
+example: 50x30x20 mm box �?mass properties �?save �?render.
 
 ## Hard rules
 
@@ -250,7 +250,7 @@ post-mortem (probe before you build, compute the answer first, verify what you h
 over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
 [tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py), and two full boards -
 the 36-body Arduino MEGA 2560 at
-`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py` and the 39-body 16-channel
+`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py` and the 41-body 16-channel
 relay board at `D:\桌面文件\workspace\relay-board\build_relay_board.py` (the latter
 is the one to copy for a new board: layout table at the top, analytic expectations
 next, then build, verify, export, render).
@@ -310,11 +310,9 @@ next, then build, verify, export, render).
    `Reference`, and the mate folder is the `MateGroup` (its name is `配合` on a
    Chinese UI). Take its children with `GetFirstSubFeature`/`GetNextSubFeature`,
    casting each to `IFeature`.
-3. Per component: `cast(comp, "IComponent2")` → `Name2`, `IsFixed`,
+3. Per component: `cast(comp, "IComponent2")` �?`Name2`, `IsFixed`,
    `GetConstrainedStatus`, `GetPathName`, and `GetXform` for the placement.
-4. Per mate: `GetSpecificFeature2` → `cast(..., "IMate2")` →
-   `GetMateEntityCount`/`MateEntity(k)` → `cast(..., "IMateEntity2")` →
-   `ReferenceComponent` (cast to `IComponent2` for the name). `IMateEntity2`
+4. Per mate: `GetSpecificFeature2` �?`cast(..., "IMate2")` �?   `GetMateEntityCount`/`MateEntity(k)` �?`cast(..., "IMateEntity2")` �?   `ReferenceComponent` (cast to `IComponent2` for the name). `IMateEntity2`
    exposes `Reference` but **not** `Entity`/`EntityType`, so the face/edge a mate
    uses is not directly readable - report the component pairs and be explicit that
    the DOF count is inferred, or read `GetConstrainedStatus` instead of guessing.
@@ -323,8 +321,8 @@ next, then build, verify, export, render).
    the job's `log()` output is not always surfaced, a file on disk always is.
 
 **Something is stuck**
-1. `status --id <id>` → `RUNNING` with a flat log means the call never returned.
-2. `dialogs` → is there a MODAL window?
+1. `status --id <id>` �?`RUNNING` with a flat log means the call never returned.
+2. `dialogs` �?is there a MODAL window?
 3. `dismiss --handle <h>` (or no handle: it picks the modal one), then `status`
    again.
 4. If the session itself looks broken, `attach` and `doctor` are read-only and
