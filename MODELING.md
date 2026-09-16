@@ -619,6 +619,115 @@ for the other axis. The KiCad forum thread for this module already warns that bo
 sizes vary (45x20, 44x21, 66x36 all ship under the name "LM2596 module"), so the
 callout is the only authority for the specific unit in hand.
 
+## Sixth part: a vendor assembly, and the STL export that refuses to work
+
+The fifth part's probe paid off here - the blind/extrude end condition, the six-argument
+rectangle and the `GetBodyBox` field order were all already settled, so none of them bit.
+What did bite was the **export**, which is where a model that measures perfectly can still
+hand over an empty file (traps 47-51). The pattern is worth remembering: the geometry API
+on this build is reliable, and the *file* API is where the surprises live.
+
+Source for this part: the vendor's own SolidWorks assembly from GrabCAD, imported through
+`LoadFile4` (rule 31). Nothing was modelled by hand - 7 components, 5 part documents,
+PCB 66.000 x 1.600 x 36.000 mm, assembly envelope 68.4 x 19.05 x 36.0 mm, volume
+8221.485 mm3, STEP 12 `MANIFOLD_SOLID_BREP`, STL 39 276 triangles with **0 open edges**.
+
+### 47. `SaveAs3` on one part exports an STL for **every open document**
+
+Measured 2026-09-16 on the LM2596 job. With seven documents open (an assembly plus its
+six parts), a single `SaveAs3(part, r"D:\out\x.STL", 0, 1)` wrote **seven** files:
+
+```
+x - 220 35V Capacitor, ...-1.STL      x - Base,  ...-1.STL
+x - 220 35V Capacitor, ...-2.STL      x - DG301-5.0-02, ...-1.STL
+x - 3 Digit 7 Segment Display, ...-1.STL   x - DG301-5.0-02, ...-2.STL
+x - Trimpot 3296W, ..._Valor predeterminado-1.STL
+```
+
+The name is `<target stem> - <document title>.<ext>`. Two consequences, both of which
+cost a cycle here:
+
+* **"Find the file we just wrote" is ambiguous.** A `startswith(component_name)` lookup
+  matched the wrong entry and the merge silently became **three meshes repeated** -
+  envelope 62.4 x 18.0 x 30.3 mm instead of 68.4 x 19.05 x 36.0, with every piece
+  reporting an identical bounding box (`shift` spread 34.67 mm).
+* **The title is what identifies the file**, not the name you passed. The Base document
+  is titled `Base,  LM2596 ...` - note the **two spaces** after the comma - so match on
+  `filename.split(" - ", 1)[1].split(",")[0].strip().lower()`, and normalise whitespace
+  on both sides.
+
+The robust shape: give each export its **own directory**, so one folder holds one
+document's mesh, and move the file out of that folder before the next export.
+
+### 48. An assembly has **no STL translator** on this build
+
+`SaveAs3(assembly, ".STL", 0, 1)` returns **`0`** and writes **zero bytes** - measured
+on an already-saved assembly, from the same call pattern that exported STEP of the same
+assembly successfully (1 113 628 bytes). A return-code check alone reports success.
+Same family as trap 23: verify the artifact by parsing it, never by the code.
+
+`IBody2.GetTessellation(None)` is not the workaround either: it raises
+`com_error(-2147417851, ...)` = `0x80010105` (`RPC_E_SERVERFAULT`) on the first solid
+tried, so the tessellation route is closed on this install.
+
+Working route for a watertight board mesh:
+
+1. Export each part with `SaveAs3` into its **own** directory (trap 47).
+2. The mesh arrives in the **document's local frame plus one translation**: the DG301
+   mesh measures `7.6 x 14.3 x 10.6` where its world box is `14.3 x 10.6 x 7.6` - the
+   component is rotated 90 deg about Y. Recover the translation by matching the mesh's
+   min corner to the document's own `GetBodyBox` min corner.
+3. Map mesh -> document local -> world with `IComponent2.GetXform()` (trap 28 layout).
+4. **Flip the winding when the rotation's determinant is negative.** This one is easy to
+   miss and loud when you do: variants with det = -1 invert every triangle, so the
+   divergence-theorem volume partly cancels - the first attempt read **4471 mm3 against
+   the solid's 8221 mm3** and looked like a modelling error.
+5. Assert open edges, non-manifold edges and the volume against `GetMassProperties2`.
+   Final result here: 39 276 triangles, **0 open edges**, 0 non-manifold, volume
+   8221.737 mm3 vs the solid's 8221.485 (**+0.0031 %**), envelope X/Z exact.
+
+### 49. `GetBodies2`'s type flag does not separate solids from surfaces here
+
+`GetBodies2(0, False)` returned all **21** bodies of the assembly and
+`GetBodies2(1, False)` returned **0**. A per-body face count confirms all 21 are real
+bodies with geometry. The STEP export of the same assembly carries only **12**
+`MANIFOLD_SOLID_BREP`, so the count that means anything is the STEP's - the 9-body
+difference is the DG301 pins and the capacitor leads, which SolidWorks holds as solid
+bodies and the STEP writer emits as open shells. **Do not assert a solid-body count from
+`GetBodies2` on this build**; cross-check STEP instead.
+
+That same shortfall explains a matching envelope difference: the mesh comes out
+16.60 mm on the axis whose extremes are the pin tips (y = -5.9), 2.45 mm under the
+solid's 19.05 mm box. Report it; do not tune it away.
+
+### 50. Named views: the two **dimetric** ones do not apply, and the camera is read-only
+
+`ShowNamedView2("*上视"/"*前视"/"*等轴测"/"*右视", 7)` all work and render genuinely
+different images. The dimetric pair does **not**:
+
+* `"*上下二等角轴测"` and `"*左右二等角轴测"` each produced a PNG **byte-identical** to
+  the isometric one - SHA-256 `bc95e43a1c1ba353` for all three. Both names are genuinely
+  in the document's list (`GetModelViewNames()` returns 10 views, the last two being
+  exactly those).
+* `ShowNamedView2` returns **`None`** for every name, valid or not, so its return value
+  proves nothing.
+* `IModelView` (from `ActiveView`) exposes no `SetModelViewXForms` here, and
+  `ICamera.SetPositionSpherical` reads back correctly (A2 = 20.70 deg) while the render
+  stays byte-identical to isometric.
+
+**A render that shares a hash with another is not a different view.** Hash every PNG
+(`sha256`) and assert the set is distinct before promising four views - this is trap 28's
+lesson, and it caught a fake "dimetric" here.
+
+### 51. Author the deliverable documentation from measurements, and state the gaps
+
+The README and HANDOFF for this part carry three numbers that a tidy report would
+quietly drop: the STL's 2.45 mm Y shortfall, the 21-vs-12 body difference, and the fact
+that `_dimetric.png` is the isometric image. Each is in the report with its cause and
+its effect on the thing being handed over. The brief allows a few millimetres provided
+the error is never *larger* than reality, which is only checkable if the residuals are
+written down.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.

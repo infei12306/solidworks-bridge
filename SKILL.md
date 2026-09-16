@@ -304,6 +304,37 @@ example: 50x30x20 mm box → mass properties → save → render.
     a 6-byte hidden `~$<name>.SLDPRT` lock). STEP and STL of the same part still
     export fine, so it looks like a format problem - it is a name collision. Close by
     title first (rule 44), then save.
+46. **`SaveAs3` on ONE part writes an STL for EVERY open document.** With seven
+    documents open, one call produced seven files named
+    `<target stem> - <document title>.stl`. So "find the file I just wrote" is
+    ambiguous, and a prefix lookup can silently return a **neighbour's mesh** (measured:
+    a merge collapsed into three repeated meshes, envelope 62.4 x 18.0 x 30.3 mm
+    instead of 68.4 x 19.05 x 36.0). Give each export its own DIRECTORY and match the
+    file by its own document title, normalised (the Base title has two spaces after its
+    comma).
+47. **An assembly has no STL translator on this build.** `SaveAs3(assembly, ".STL")`
+    returns **0** and writes **zero bytes**, from the same call pattern that exports that
+    assembly's STEP successfully - a return-code check alone calls it a success.
+    `IBody2.GetTessellation(None)` is no escape: it raises `0x80010105`
+    (`RPC_E_SERVERFAULT`). Mesh each part, then map mesh -> document local -> world with
+    `IComponent2.GetXform()` (trap 28 layout), deriving the export translation by
+    matching the mesh's min corner to the document's `GetBodyBox` min corner.
+48. **Flip triangle winding when the placement's determinant is negative.** A 90-degree
+    component is det = -1 and inverts every facet, so the divergence volume partly
+    cancels: measured 4471 mm3 against the solid's 8221 mm3, which reads as a modelling
+    error. Swap two vertices per triangle when det < 0.
+49. **Do not count solid bodies with `GetBodies2` on this build.** `GetBodies2(0)` and
+    `GetBodies2(1)` both come back with the same bodies (measured 21 and 0 for a
+    12-solid assembly). The meaningful count is the STEP's `MANIFOLD_SOLID_BREP`.
+    Related: pins and leads that SolidWorks holds as solids are written as open shells,
+    which is also why the mesh envelope can fall short on the axis whose extremes are
+    the pin tips - report that, do not tune it away.
+50. **Hash every render before promising four views.** `ShowNamedView2` returns `None`
+    for every name on this build - valid or not - so the return value proves nothing,
+    and the two dimetric views render **byte-identical to isometric** (same SHA-256).
+    `IModelView` has no rotation setter here and `ICamera.SetPositionSpherical` reads
+    back the angle you set while the render does not change. A render that shares a hash
+    with another is not a different view (trap 28's lesson).
 
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-128-body-board-from-a-vendor-cad-file) carries
@@ -445,6 +476,11 @@ next, then build, verify, export, render).
 | Envelope looks plausible but every dimension is wrong | `GetBodyBox` is block order, not paired (rule 43). Print the raw array. |
 | A cleanup loop closed N documents and nothing actually closed | `close_document` takes a title string, not a document object (rule 44). |
 | `SaveAs3` returns `1` but STEP/STL of the same part saved fine | A document with that name is still open; also check for a `~$` lock file (rule 45). |
+| One `SaveAs3` produced several STLs named `<target> - <title>` | It exports EVERY open document; match by title, one folder per export (rule 46). |
+| `SaveAs3(assembly, ".STL")` returns 0 and writes 0 bytes | No assembly STL translator; mesh per part (rule 47). |
+| Mesh volume far below `GetMassProperties2` after assembling parts | Negative-determinant placement inverted the facets; flip the winding (rule 48). |
+| `GetBodies2(1)` returns 0 and `(0)` returns everything | The type flag does not filter here; count from the STEP instead (rule 49). |
+| Four "different" renders share a SHA-256 | Two of them are the same view; hash every PNG (rule 50). |
 
 Design decisions, the measured numbers, and the full pitfall log:
 [REFERENCE.md](REFERENCE.md).
