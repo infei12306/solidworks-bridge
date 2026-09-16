@@ -346,7 +346,7 @@ over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
 [tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py), and two full boards -
 the 128-body Arduino MEGA 2560 (102 header pins, one solid each) at
 `D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py` and the 93-body 16-channel
-relay board (70 pins) at `D:\桌面文件\workspace\relay-board\build_relay_board.py` (the latter
+relay board (70 pins) at `D:\桌面文件\车架复刻交付\relay-board\build_relay_board.py` (the latter
 is the one to copy for a new board: layout table at the top, analytic expectations
 next, then build, verify, export, render).
 
