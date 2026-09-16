@@ -12,6 +12,7 @@ verified against the live session.
 | `tests/jobs/make_bracket.py` - L bracket, 80 + 60 legs, 5 mm plate, 40 mm wide, four 6.5 mm countersunk holes | **Complete.** Volume and surface area match the analytic values to **0.0000 %**, all four hole axes verified from the body, envelope exactly 80 x 60 x 40 mm, STEP + STL + two renders produced. |
 | 128-body Arduino MEGA 2560 Rev3, built from the vendor's own EAGLE board file (`D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py`) | **Complete.** Board outline area, board volume, whole-part volume, envelope and all six mounting-hole axes match analytic values exactly; **102 header pins pulled straight from the EAGLE pads, one solid each**; 126 footprints checked pairwise for overlap; STEP carries 128 solids; STL is watertight. See [§ Second part](#second-part-a-128-body-board-from-a-vendor-cad-file) and [§ Fourth part](#fourth-part-per-pin-bodies-out-of-pad-data). |
 | 93-body 16-channel 12 V relay board, dimensions triangulated from a flat vendor photo because no vendor CAD exists (`D:\桌面文件\workspace\relay-board\build_relay_board.py`) | **Complete for the modelled scope.** PCB volume and total volume match analytic to **0.0000 %**, 93 bodies, envelope exactly 179 x 90 x 16.6 mm, **70 individually-bodied pins asserted** (48 relay outputs + 20 input header + 2 power poles), all 92 boxes checked pairwise for overlap (4186 pairs), 4/4 mounting-hole rims found on the body, STEP carries 93 solids, STL watertight (2100 triangles, 0 open edges). See [§ Third part](#third-part-a-93-body-relay-board-where-the-input-had-to-be-reconstructed). |
+| API-semantics probe for the LM2596 module: 30 x 20 x 1.6 mm plate + ten 2.04 mm posts (`D:\桌面文件\workspace\lm2596-voltmeter\probe_offset_boss.py`) | **Complete, 12.7 s, zero failures.** Settles the blind/extrude end condition, the six-argument rectangle, where `SetAddToDB` lives, the `GetBodyBox` field order, the `close_document` signature and the `SaveAs3` name collision. Measured volume equals the analytic PCB + posts sum exactly (1313.7360 mm3), envelope exactly 30 x 20 x 10.1 mm, 11 bodies, STEP 11 solids, STL watertight (132 triangles, 0 open edges, volume agreement -0.00001 %). See [§ Fifth part](#fifth-part-a-probe-that-cost-12-seconds-instead-of-a-269-second-mistake). |
 
 The bracket job asserts at every step, so a wrong intermediate state fails loudly
 instead of leaving a part that merely looks finished. It took four failed routes
@@ -517,6 +518,106 @@ still looking perfectly plausible. Derive every count and volume from the same t
 the model is built from and pass it through a placeholder - the MEGA README now
 computes its own body count (128), pin count (102) and volumes, so it cannot be
 right about the geometry and wrong about the summary.
+
+## Fifth part: a probe that cost 12 seconds instead of a 269-second mistake
+
+Before modelling the LM2596 buck-converter module, the six API semantics this part
+needs were measured on a 30 x 20 x 1.6 mm plate with ten 2.04 mm posts - a job that
+runs in **12.7 s**. Four of the six were wrong in the first draft, and every one of
+them would have silently produced a plausible-looking part. That is the whole
+argument for the probe: none of these raised an error at the call site.
+
+### 39. `swEndCondBlind` is **0**, and **1** is `swEndCondThroughAll`
+
+The worst trap of the set, because it does not fail - it produces geometry. Passing
+`1` as the end condition makes SOLIDWORKS take a **through-all**, so `D1` is ignored
+and the boss runs to the default 1000 mm. Measured on a 30 x 20 mm sketch extruded
+with `D1 = 0.002 m`:
+
+| T1 = T2 | resulting body box (mm) | volume |
+|---|---|---|
+| `1` (`swEndCondThroughAll`) | 30 x 20 x **1000** | 0.000600 m³ |
+| `0` (`swEndCondBlind`) | 30 x 20 x **2** | 0.000002 m³ |
+
+Note the volume *agrees with the geometry* in both cases (30 x 20 x 1000 mm³ =
+0.000600 m³ exactly), so a volume assertion alone will not catch it - only a
+**dimension** assertion will. `D1` does not even have to change: 0.002, 0.005 and
+0.030 m all returned the same 1000 mm body. Get the value from the stubs, never from
+memory: `grep swEndCond <LOCALAPPDATA>\swbridge\stubs\_swconst_gen.py` prints
+`swEndCondBlind =0`, `swEndCondThroughAll =1`, `swEndCondThroughNext =2`,
+`swEndCondUpToNext =11`. The working call is in
+`relay-board/build_relay_board.py` (`SW_END_COND_BLIND = 0`).
+
+### 40. `ISketchManager.CreateCornerRectangle` takes **six** arguments
+
+`(x1, y1, z1, x2, y2, z2)`. The z pair is ignored by the sketch but **must be
+present**: passing four values raises
+`com_error(-2147352571, 'type mismatch', None, 5)` = `DISP_E_TYPEMISMATCH`
+(`0x80020005`). The failure is clean - the rectangle is simply never created, the
+sketch comes back `GetLineCount() == 0`, and the extrude that follows returns `None`
+with no error. Expect `lines=4 arcs=0 contours=1` for a rectangle and assert it.
+
+### 41. `SetAddToDB` is on `IModelDoc2`, not `ISketchManager`
+
+`call(sm, "SetAddToDB", True)` raises
+`AttributeError: ISketchManager ... has no attribute 'SetAddToDB'`. It is
+`call(doc, "SetAddToDB", True)`. The same applies to `ClearSelection2`. Rule 20's
+warning still holds - without it, relations eat sketch entities.
+
+### 42. `IBody2.GetBodyBox()` returns **block** order, and the bridge brief says otherwise
+
+Measured on this build: a 30 x 20 x 1.6 mm slab returns
+`[0, 0, 0, 30, 20, 1.6]`, i.e.
+
+```
+[xmin, ymin, zmin, xmax, ymax, zmax]
+```
+
+The task brief that seeded this work states `IBody2.GetBodyBox` is "paired"
+(`[xmin,xmax,ymin,ymax,...]`) while `IComponent2.GetBox` is block - that is backwards
+for `IBody2`. With the paired reading, a correct 30 x 20 x 10.1 mm 11-body part reports
+an envelope of `(7.54, 30.0, 3.06)`: plausible, wrong, and impossible to spot in a
+render. Print the raw array before trusting any interpretation of it. (SKILL.md rule 43
+now carries the corrected statement.)
+
+### 43. `Session.close_document(title, ...)` takes a **title string**, and fails silently
+
+The parameter is a title, and the implementation finds the document with
+`call(candidate, "GetTitle") == title`. Hand it a document *object* and the
+comparison is simply False, so it returns `False` and closes **nothing** - no
+exception, no log. A cleanup loop that closed eight documents "succeeded" eight times
+while `GetDocuments()` still listed all nineteen. Two lessons: call
+`app.CloseDoc(title)` with the real title (or check the boolean), and **assert the
+open-document count actually fell** afterwards. `swcore.retry_call(app.CloseDoc,
+title)` is the form that works.
+
+### 44. A leftover document blocks `SaveAs3` with code **1**, and an unsaved part owns a `~$` lock
+
+If a document with the target name is still open, `SaveAs3` returns `1` and writes
+nothing - while the STEP and STL exports of the same part succeed, which makes it look
+like a format problem. The tell is a `~$<name>.SLDPRT` file (6 bytes, Hidden) next to
+the part. A part created by `NewPart` that was never saved also keeps that lock, so it
+can block its own earlier file. Close by title first (trap 43), then save.
+
+### 45. A 1000 mm body is not a scaling bug - check the end condition before the units
+
+The symptom (a body 1000 mm tall, volume exactly area x 1000, `props[3]` agreeing with
+the envelope) looks like a metres/millimetres problem. It is not: `GetMassProperties2`
+agreed with the box in both cases, which is exactly why the units hypothesis survives
+inspection. Trap 39 is the cause. Rule: when a dimension is wrong but the volume is
+*self-consistent*, suspect the **feature definition**, not the units.
+
+### 46. The screenshot of a product photo can be anisotropic, and the dimension callouts prove it
+
+The LM2596 vendor image is 1260 x 832 px. The board measures **657 x 455 px**, but
+66 : 36 demands 1.8333 and 657 : 455 is **1.4444** - a 27 % mismatch. So the asset has
+been rescaled unevenly (stretched vertically or squeezed horizontally) somewhere in
+production. Consequence: one uniform mm/px must **not** be derived from it. Derive
+`mm_per_px_x = 66 / board_w_px` and `mm_per_px_y = 36 / board_h_px` **separately**,
+use them only for that axis, and never let a single dimension's callout set the scale
+for the other axis. The KiCad forum thread for this module already warns that board
+sizes vary (45x20, 44x21, 66x36 all ship under the name "LM2596 module"), so the
+callout is the only authority for the specific unit in hand.
 
 ## Process: what this project cost, and how to run the next one
 

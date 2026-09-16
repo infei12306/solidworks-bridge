@@ -274,6 +274,36 @@ example: 50x30x20 mm box → mass properties → save → render.
     both committed and pushed, and `git diff` showed only the intended 3 lines.
     Use the `edit` tool for every text change. To check, and to find the last good
     revision: `git show <rev>:SKILL.md | python -c "import sys; sys.stdin.buffer.read().decode('utf-8')"`.
+40. **`swEndCondBlind` is `0`; `1` is `swEndCondThroughAll`.** Passing `1` as the
+    extrusion end condition silently takes a through-all, so the depth argument is
+    **ignored** and the boss runs to the default **1000 mm**. Measured 2026-09-16: a
+    30 x 20 mm profile with `D1 = 0.002 m` returned a 30 x 20 x **1000** body with
+    volume 0.000600 m3, and `D1 = 0.005` / `0.030` returned the very same body. The
+    volume agrees with the geometry, so only a **dimension** assertion catches it.
+    Look the value up, never recall it:
+    `grep swEndCond %LOCALAPPDATA%\swbridge\stubs\_swconst_gen.py`
+    (`Blind=0`, `ThroughAll=1`, `ThroughNext=2`, `UpToNext=11`). Working call:
+    `relay-board/build_relay_board.py`, `SW_END_COND_BLIND = 0`.
+41. **`ISketchManager.CreateCornerRectangle` takes SIX arguments**
+    `(x1, y1, z1, x2, y2, z2)`. The z pair is ignored but must be present - pass four
+    and you get `DISP_E_TYPEMISMATCH (0x80020005)` with the sketch simply never
+    created, then `FeatureExtrusion3` returns `None` with no error. Assert the
+    readback every time: a rectangle is `lines=4 arcs=0 contours=1`.
+42. **`SetAddToDB` / `ClearSelection2` are on `IModelDoc2`, not `ISketchManager`.**
+    `call(sm, "SetAddToDB", True)` is an `AttributeError`; use `call(doc, ...)`.
+43. **`IBody2.GetBodyBox()` returns block order `[xmin,ymin,zmin,xmax,ymax,zmax]`**,
+    the same as `IComponent2.GetBox`. Measured: a 30 x 20 x 1.6 slab returns
+    `[0,0,0,30,20,1.6]`. Reading it as paired yields a plausible wrong envelope
+    (30 x 20 x 10.1 read as 7.54 x 30 x 3.06). Print the raw array first.
+44. **`Session.close_document(title, ...)` wants a title STRING, and fails silently.**
+    Hand it a document object and its `GetTitle() == title` check is just False, so it
+    returns `False` and closes nothing - no exception. A loop "closed" 8 documents
+    while all 19 stayed open. Use `swcore.retry_call(app.CloseDoc, title)` and
+    **assert the open-document count fell**.
+45. **An open document blocks `SaveAs3` with code `1`** (and an unsaved `NewPart` owns
+    a 6-byte hidden `~$<name>.SLDPRT` lock). STEP and STL of the same part still
+    export fine, so it looks like a format problem - it is a name collision. Close by
+    title first (rule 44), then save.
 
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-128-body-board-from-a-vendor-cad-file) carries
@@ -409,6 +439,12 @@ next, then build, verify, export, render).
 | A numeric SOLIDWORKS error code you cannot name | `grep <code> %LOCALAPPDATA%\swbridge\stubs\_swconst_gen.py` - it prints the constant *and* its enum (rule 34). |
 | Total volume is off by exactly the difference between a block and its pins | You split a part into per-pin solids but left the old block volume in the analytic sum (rule 36). |
 | A doc in this repo shows as binary / refuses to decode | PowerShell `Get-Content \| Set-Content` re-encoded it. Find the last good revision and redo the edit with the `edit` tool (rule 39). |
+| An extrusion came out 1000 mm tall and ignored its depth | `T1/T2 = 1` is `swEndCondThroughAll`, not blind. Use `swEndCondBlind = 0` (rule 40). |
+| `com_error(-2147352571, 'type mismatch', 0x80020005)` on a sketch entity | Wrong argument count. `CreateCornerRectangle` needs all six (rule 41). |
+| `ISketchManager ... has no attribute 'SetAddToDB'` | It is on `IModelDoc2` (rule 42). |
+| Envelope looks plausible but every dimension is wrong | `GetBodyBox` is block order, not paired (rule 43). Print the raw array. |
+| A cleanup loop closed N documents and nothing actually closed | `close_document` takes a title string, not a document object (rule 44). |
+| `SaveAs3` returns `1` but STEP/STL of the same part saved fine | A document with that name is still open; also check for a `~$` lock file (rule 45). |
 
 Design decisions, the measured numbers, and the full pitfall log:
 [REFERENCE.md](REFERENCE.md).
