@@ -728,6 +728,146 @@ its effect on the thing being handed over. The brief allows a few millimetres pr
 the error is never *larger* than reality, which is only checkable if the residuals are
 written down.
 
+## Sixth part: 172 centre points on two boards, and the point-creation flake
+
+Task: one sketch point on the **centre of the wire-entry face** of every connector pin -
+top faces on the two pin headers, but **side** faces on the relay screw terminals,
+because a real screw terminal takes its wire horizontally. Sketch points only; no
+connection-point features were wanted.
+
+Measured inventory, from `IBody2.GetBodyBox()` grouped boxes:
+
+| part | class (mm) | n | entry face | point placed |
+|---|---|---|---|---|
+| `Arduino_Mega_2560_R3` | 2.04x2.04x8.50, z 1.60..10.10 | 102 | top, +Z | (cx, cy, 10.10) |
+| `Relay_Board_16CH_12V` | 1.94x1.94x8.50, z 1.60..10.10 | 20 | top, +Z | (cx, cy, 10.10) |
+| `Relay_Board_16CH_12V` | 4.48x10.20x10.00 | 48 | side, outward ±Y | (cx, y_face, 6.60) |
+| `Relay_Board_16CH_12V` | 6.00x4.48x10.00 | 2 | side, outward +X | (x_face, cy, 6.60) |
+
+The 48 terminals form two rows of 24 at y0 = 3.00 and y0 = 76.80 on a 179x90 board, so
+"outward" is -Y for the first row and +Y for the second. The 2 power poles sit on the
+x = 179 short edge, so theirs is +X. The entry face is *not* the top for a screw terminal -
+ask which way the real part takes its wire before assuming.
+
+### 52. `GetTitle` / `GetPathName` / `GetType` / `GetSaveFlag` are **properties** here, not methods
+
+`doc.GetTitle()` raises `TypeError: 'str' object is not callable`, and `app.ActiveDocName`
+does not exist at all. An unguarded call aborts the whole job and the bridge log shows
+only a bare `pywintypes.com_error` with no traceback, so wrap every member read:
+
+```python
+import types
+def P(obj, name, *a):
+    v = getattr(obj, name)
+    return v(*a) if isinstance(v, types.MethodType) else v
+```
+
+Also wrap the whole job body in `try/except` and write `traceback.format_exc()` into the
+UTF-8 report file - the bridge log alone will not tell you which line died.
+
+### 53. `SelectByID2` lives on `IModelDocExtension`, and its `Callout` argument rejects `None`
+
+`IModelDoc2.SelectByID2` does not exist. `IModelDocExtension.SelectByID2(Name, Type, X, Y,
+Z, Append, Mark, Callout, SelectOption)` declares `Callout` as VT_DISPATCH by value, so
+`None` gives `com_error(-2147352571, '类型不匹配', None, 8)`.
+
+Do not fight it - the entity-level selectors have **no** Callout argument:
+
+| call | parameter types from the stub |
+|---|---|
+| `IEntity.Select2(Append, Mark)` | `((11,1),(3,1))` |
+| `ISketchPoint.Select2(Append, Mark)` | `((11,1),(3,1))` |
+| `ISketchPoint.Select4(Append, Data)` | `((11,1),(9,1))` |
+
+`cast(face, "IEntity").Select2(True, 1)` and `cast(point, "ISketchPoint").Select2(True, 1)`
+both return `True` and leave exactly 2 objects selected. To read a signature instead of
+guessing, grep the generated stub - it is a plain Python file and every `def` ends in an
+`InvokeTypes` list whose VT codes say which arguments accept `None`:
+
+```
+%LOCALAPPDATA%\Temp\gen_py\3.11\83A33D31-27C5-11CE-BFD4-00400513BB57x0x33x0.py
+```
+
+### 54. `IConnectionPointFeatureData` **is** in the typelib - read a connection point back numerically
+
+An earlier note in this file said nothing could read a connection point's position. That
+is wrong: cast the feature definition and every field is exposed.
+
+```python
+cpd = cast(ft.GetDefinition(), "IConnectionPointFeatureData")
+cpd.Location        # [x, y, z] in metres - the selected sketch point, exactly
+cpd.Direction       # unit vector - the selected face's normal
+cpd.RouteDiameter, cpd.StubLength
+cpd.RouteType, cpd.RouteSubType, cpd.Name2, cpd.PortID, cpd.ElectricalPinID
+```
+
+Proven call `InsertConnectionPoint(3, 1, False, 0.001, 0.005, 0, 0, 0, "", 0, 0, 0, "", "")`:
+`Location` came back equal to the sketch point to 4 decimals, `Direction` `[0, 0, 1]`,
+`RouteDiameter` 0.001, `StubLength` 0.005 - and `RouteType` **6**, not the 3 that was
+passed. Use this instead of a screenshot to prove where a connection point landed.
+
+### 55. `ISketchManager.CreatePoint` can silently drop you onto an earlier point - read back and retry
+
+Creating 70 points in one 3D sketch, 22 came back at the **wrong** coordinates: 20 header
+points collapsed onto 6 positions and 2 power points onto 1, while the 48 terminal points
+created in the same sketch were perfect. `CreatePoint` returned an object whose `X`/`Y`/`Z`
+belonged to an *earlier* point, and `GetSketchPoints2` agreed with it. Repeating the
+identical batch on a clean document gave **20/20 exact**, so it is a flake, not a snapping
+rule. Do not spend rounds theorising about grids - verify.
+
+```python
+P(sm, "Insert3DSketch", True)
+for p in targets:
+    P(sm, "CreatePoint", p[0]/1000.0, p[1]/1000.0, p[2]/1000.0)
+P(sm, "Insert3DSketch", True)          # the same call closes the sketch
+
+got = sorted(key3((P(sp,"X")*1000.0, P(sp,"Y")*1000.0, P(sp,"Z")*1000.0))
+             for sp in as_list(P(P(sk, "GetSpecificFeature2"), "GetSketchPoints2")))
+if got != sorted(key3(p) for p in targets):
+    drop_all(d)                        # then retry the whole sketch
+```
+
+Both parts then verified on the first attempt: 102/102 and 70/70, all distinct, and a
+**second independent run** that recomputed every target from `GetBodyBox` matched again.
+
+* `GetSketchPoints2` does **not** return points in creation order - compare sorted
+  multisets, never sequences.
+* Measured on the same 22-point probe: `ISketchManager.CreatePointDB`,
+  `ISketchManager.CreatePoint2`, `IModelDoc2.CreatePoint` and `IModelDoc2.CreatePointDB`
+  produced **0/22** usable points; `IModelDoc2.CreatePoint2` managed 21/22.
+  `ISketchManager.CreatePoint` is the one to use.
+
+### 56. `IFeature.Name` is writable - rename after creation
+
+`InsertConnectionPoint` and `Insert3DSketch` take no name argument. Assign it afterwards
+via `P(d, "FeatureByPositionReverse", 0).Name = "接线点-MEGA"`; Chinese names survive the
+feature-tree walk and come back intact.
+
+### 57. Delete features with `IFeature.Select2` + `IModelDoc2.EditDelete()`
+
+```python
+P(d, "ClearSelection2", True)
+P(feature, "Select2", False, 0)
+P(d, "EditDelete")               # returns None on success
+```
+
+Delete every `3DProfileFeature` / `ConnectionPoint` in a loop at the **start** of the job,
+re-reading `FirstFeature` each pass. That makes the job idempotent, so a retry after a
+partial failure is safe rather than additive. One clean run of the whole 172-point job
+took 37 s.
+
+### 58. `ShowNamedView2` needs a real view id - `-1` is accepted and does nothing
+
+Calling `ShowNamedView2("*Top", -1)` and `ShowNamedView2("*Isometric", -1)` returned `None`
+and left the camera exactly where it was, so the "top view" screenshot was really the
+previous document's view - and a `-1` id is silent, not an error. Trap 50 above has the
+working form: the view name **plus a real id**, e.g. `ShowNamedView2("*等轴测", 7)`.
+`ViewZoomToSelection()` likewise returned `None` without zooming, and
+`IModelDocExtension.ZoomByFactor` does not exist through dynamic dispatch
+(`AttributeError('<unknown>.ZoomByFactor')`). When you cannot aim the camera, prove the
+geometry numerically and treat the render as a secondary check that can only add
+confidence.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
