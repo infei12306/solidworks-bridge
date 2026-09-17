@@ -868,6 +868,60 @@ working form: the view name **plus a real id**, e.g. `ShowNamedView2("*等轴测
 geometry numerically and treat the render as a secondary check that can only add
 confidence.
 
+### 59. `Insert3DSketch` **re-opens the selected 3D sketch** - one stray selection silently destroys the previous sketch
+
+This is the worst trap in this file, because it reports success the whole way and leaves
+you with one sketch instead of 172.
+
+With a 3D sketch already in the part, `ISketchManager.Insert3DSketch(True)` does **not**
+create a new one - it re-opens the sketch that is currently selected. Building
+one-sketch-per-point, the loop was:
+
+```python
+P(sm, "Insert3DSketch", True); P(sm, "CreatePoint", ...); P(sm, "Insert3DSketch", True)
+sk = P(d, "FeatureByPositionReverse", 0); sk.Name = name      # rename leaves it SELECTED
+```
+
+The rename leaves the sketch selected, so the next `Insert3DSketch` re-opened *that*
+sketch and the next `CreatePoint` appended a second point to it. The check then saw a
+2-point sketch, rejected it, and the cleanup **deleted the previous sketch**. Measured
+trace, five targets:
+
+```
+target 1 attempt 1: opened '3D草图114' with 0 existing point(s)  -> OK
+target 2 attempt 1: opened '点-TEST-001' with 1 existing point(s) -> rejected, deleting 点-TEST-001
+target 2 attempt 2: opened '3D草图115' with 0 existing point(s)  -> OK
+target 3 attempt 1: opened '点-TEST-002' with 1 existing point(s) -> rejected, deleting 点-TEST-002
+...
+```
+
+Every target "succeeded" on attempt 2, so the job reported **0 failures** - and finished
+with exactly **one** surviving sketch, the last one (`点-MEGA-102`, `点-PWR-2`), and a
+feature count of `276+1` / `206+1` instead of `276+102` / `206+70`. A feature count that
+grew by 1 when you asked for 172 is the tell.
+
+**Fix - clear the selection before every `Insert3DSketch`, and assert the sketch you
+opened is empty before you draw in it:**
+
+```python
+P(d, "ClearSelection2", True)
+P(sm, "Insert3DSketch", True)
+act = P(d, "GetActiveSketch2")
+if act is None or len(as_list(P(act, "GetSketchPoints2"))) != 0:
+    P(sm, "Insert3DSketch", True)      # close whatever re-opened
+    P(d, "ClearSelection2", True)
+    continue
+P(sm, "CreatePoint", ...)
+P(sm, "Insert3DSketch", True)
+P(d, "ClearSelection2", True)          # do not leave it selected for the next pass
+```
+
+With that, all five probe sketches persisted side by side and the real job put **102 +
+70 = 172 single-point sketches** in place, `VERIFIED 172/172` against a final
+`FirstFeature`/`GetNextFeature` walk. Lesson: after building a large set of features,
+**count them in the tree** - per-item return codes were all `True` while 171 of 172
+sketches did not exist.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
