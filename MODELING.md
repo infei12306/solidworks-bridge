@@ -1211,6 +1211,65 @@ So the three-way test, in order: **is it in a pattern? does its end condition re
 sketch dimensioned to the old length?** A `through-all` cut survives a length change for
 free; a `blind` one and an all-copies-in-one-sketch one do not.
 
+### 71. Sourcing round 2: the datasheet in the photo is the search key, and the *series sibling* is the prize
+
+Trap 69 said "search the part number". The e-stop job shows what to do when the photo does
+not *contain* a searchable part number, only a **spec table**:
+
+| the photo said | what to search |
+|---|---|
+| 型号 `LA38` | `LA38` + the format (`grabcad LA38 3D model`) |
+| 开孔 `22mm`, 触点 `一开一闭`, 操作 `自锁式` | nothing yet - translate to the industry code |
+| all three together | **`LA38-11ZS`** - and *that* is what has hits |
+
+The digit-code convention is the unlock: `<series>-<contact><type><action>` where
+`11` = 1NO+1NC, `ZS` = 自锁 (push-lock / twist-release). Same part, different name, and only
+the code appears in CAD titles. Do this translation **before** searching, not after the
+first search comes back with shelving brackets.
+
+**When the exact model does not exist, hunt the series sibling.** `LA38` is a button
+*family*: `LA38-11D` is the illuminated flush-head version and it shares the 中座 (mounting
+collar), contact module and base with `LA38-11ZS` - **only the head differs**. So
+`grabcad.com/library/illuminated-push-button-switch-la38-11d-1` (`.SLDPRT`, 7125 downloads)
+is not "a different part", it is the best available starting body for the e-stop. This is
+the SPL-62 -> SPL-122 trick generalised: **when the exact variant is absent, take the
+sibling that shares the tooling and re-cut the one feature that differs.** Sharper than
+taking a same-spec part from another manufacturer, because the shared geometry is real.
+
+**Verify a candidate by looking at its render, not its title.** Every one of six candidates
+titled "22mm ... emergency stop" rendered as something materially different: the top
+same-spec hit (`TOKCKYBL 22MM 1NO 1NC`) renders the **boxed** variant (mushroom + yellow
+enclosure), and the most-liked one (9929 downloads) is an unnamed US-style twist-release
+with routing points baked into its `.SLDASM`. Downloading the six card images and reading
+them cost one command and changed the ranking against the titles twice. Card images live at
+a stable, guessable URL once you have read the model page:
+
+```
+https://grabcad.com/screenshots/pics/<hash>/large.png     # or .JPG - do not trust the ext
+```
+
+**Two tooling corrections to earlier notes in this file:**
+
+* `pwsh` **can** reach the network. `Invoke-WebRequest` failed with 无法连接到远程服务器 in an
+  earlier session, but here it fetched six GrabCAD screenshots on the first try. Treat "no
+  network in pwsh" as a per-session fact to re-test, not a standing one.
+* A download saved as `x.png` whose bytes are JPEG makes `read_image` **refuse** the file
+  (`the .png extension declares image/png, but the bytes use a different image format`).
+  GrabCAD serves `.JPG` from `.png`-looking URLs. Sniff and rename in one pass:
+
+```powershell
+$b = Get-Content $f -Encoding Byte -TotalCount 4
+$hex = ($b | ForEach-Object { $_.ToString('X2') }) -join ''
+# FFD8FF->jpg  89504E47->png  47494638->gif  52494646->webp
+```
+
+**A site that resolves to a loopback address is not down, it is unreachable *from here*.**
+`www.3dcontentcentral.com` resolved to `127.0.0.1` on this machine (proxy fake-IP), so both
+`read_page` and `web_fetch` refused it with "resolves to a non-public IP address" /
+"Blocked private network target". That is a local DNS artifact, not a dead link: the page
+loads fine in the user's own browser. Say so and hand over the URL instead of burning turns
+on retries.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.

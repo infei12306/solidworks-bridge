@@ -363,6 +363,14 @@ example: 50x30x20 mm box → mass properties → save → render.
 55. **`SaveAs3` to a native `.SLDPRT` returns 64 and still writes the file.** The `save`
     command only owns `3mf|iges|pdf|step|stl|x_t`; saving a part is a job-side
     `d.SaveAs3(path, 0, 1)`. Check the file and the title change, not the code. Trap 67.
+56. **Source before you model, and take the series sibling when the exact variant is
+    absent.** Translate the photo's spec table into the industry code first (`22mm` +
+    `一开一闭` + `自锁` = `LA38-11ZS`) and search *that*. If the exact code has no CAD, the
+    same **series** usually does and shares the tooling: `LA38-11D` shares the 中座, contact
+    module and base with the `LA38-11ZS` e-stop, so it is the right starting body, whereas a
+    same-spec part from another brand only shares the envelope. Verify each candidate by
+    reading its render, never its title - the top same-spec hit rendered the boxed variant.
+    Trap 71.
 
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-128-body-board-from-a-vendor-cad-file) carries
