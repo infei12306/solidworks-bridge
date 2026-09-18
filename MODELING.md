@@ -1175,6 +1175,42 @@ only true 1:1 body found was reached by following a remix link backwards
 
 Read the licence from the model's own page before it goes into anything deliverable.
 
+### 70. Which cut is stale is decided by its **plane and end condition**, not by its sketch's X range
+
+Trap 61 narrows the suspects; it does not name the culprit. In this job the sketch-extent
+audit pointed at `Вырез-Вытянуть1` + mirror (`Эскиз2`, x -19.50..0, the narrowest of the
+stale-looking ones) - and that was **wrong**. Reading the sketch's own placement settles it
+in one line:
+
+```python
+mt  = getv(sk, "ModelToSketchTransform")     # model -> sketch
+arr = list(mt.ArrayData)                     # [0:9] 3x3 rotation row-major, [9:12] translation (m)
+```
+
+For `Эскиз2` that is `R = [[0,0,1],[0,1,0],[-1,0,0]]`, `t = (0, 0, -32.45)`, so
+`p_model = R_transpose * (p_sketch - t)` gives **`X = 32.45` constant** - the sketch sits on
+a plane normal to X and its `u`/`v` are `(Z, Y)`. A cut on an X-normal plane with
+`T1 = swEndCondThroughAll` therefore already spans the *whole new length*; it was never a
+problem. The same one-line read identifies the real ones:
+
+| feature | sketch plane | end condition | follows a length change? |
+|---|---|---|---|
+| `Вырез-Вытянуть1` + mirror | X = 32.45 | through-all along X | **yes** |
+| `Вырез-Вытянуть10` | Z = -19.50 | blind | **no** - and it carries 6 bay windows itself |
+| `Вырез-Вытянуть14` | X = 0 | blind 29.5 | no - stops at X 29.5 |
+| `Вырез-Вытянуть-Тонкостенный2` | Z = -19.50 | thin, X +-19.85 | no |
+
+The observable symptom matched `Вырез-Вытянуть10` exactly: with its six windows
+(`u = +-(1.15..4.05)`, `+-(6.35..9.25)`, `+-(11.55..14.45)`, all at `v` 3.80..8.50) covering
+only `|X| <= 14.45`, the six *new* levers stood in solid material - the render showed them
+as slivers half-buried in an uncut top face, while their neighbours sat in open slots. Adding
+the six missing windows (`|X|` 16.75..19.65, 21.95..24.85, 27.15..30.05) took the sketch from
+26 to 50 segments and freed them.
+
+So the three-way test, in order: **is it in a pattern? does its end condition reach? is its
+sketch dimensioned to the old length?** A `through-all` cut survives a length change for
+free; a `blind` one and an all-copies-in-one-sketch one do not.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
