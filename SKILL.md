@@ -335,12 +335,42 @@ example: 50x30x20 mm box → mass properties → save → render.
     `IModelView` has no rotation setter here and `ICamera.SetPositionSpherical` reads
     back the angle you set while the render does not change. A render that shares a hash
     with another is not a different view (trap 28's lesson).
+51. **A linear pattern is not the only thing that repeats geometry.** Editing a
+    third-party model's pattern count changes only what is *in* the pattern. On the SPL-62
+    connector, `3 -> 6` and `4 -> 7` on the two pole patterns gave 12 levers and left the
+    wire holes at 6, because that cut carried all six circles in one sketch and was in no
+    pattern - every return code was `True`. **Audit first**: print every sketch's own 2D
+    extent (`ISketch.GetSketchPoints2()` -> `ISketchPoint.X/Y/Z`) and compare against the
+    length you are about to change. **Verify after** by counting the entity class (bore
+    rims, bodies), never by the feature's return value. Traps 60, 61.
+52. **A blind cut's direction does not follow the boss's convention, and the wrong flag is
+    `None`, not an error.** On the front plane `FeatureExtrusion3(Sd=True, Flip=False,
+    Dir=False, ...)` goes `+Z`, while the same triple on `FeatureCut4` with `T1=T2=0` cuts
+    nothing and returns `None`. Measured working triples: `(True, False, True)` for a `+Z`
+    blind cut, `(True, False, False)` for a `+Y` blind cut from the top plane,
+    `(False, False, False)` for through-all (direction-independent). Retry across the
+    combinations, and remember a failed feature leaves its sketch **open** - exit and
+    delete it before re-drawing (trap 17). Trap 62 has the helper.
+53. **Capture a zero-error baseline before editing a foreign model.** `IFeature.
+    GetErrorCode()` is `0` for clean; SPL-62 was 66 zeros before the edit and exactly one
+    `err=1` after, which is the only thing that separated an introduced fault from the
+    author's own (and from a scary-but-harmless `ForceRebuild3 -> False`). Trap 63.
+54. **When a model will be re-scaled, put every copy in ONE sketch - never a pattern.**
+    Twelve circles in one sketch = one cut = 12 bores; 14 rectangles = 14 levers with
+    `merge=False`. Changing the pole count is then one constant and the class of bug in
+    rule 51 cannot happen. The rebuilt SPL-122 landed at `60.800 x 16.500 x 37.800` with 15
+    bodies and 12 distinct bore axes on the first run. Trap 68.
+55. **`SaveAs3` to a native `.SLDPRT` returns 64 and still writes the file.** The `save`
+    command only owns `3mf|iges|pdf|step|stl|x_t`; saving a part is a job-side
+    `d.SaveAs3(path, 0, 1)`. Check the file and the title change, not the code. Trap 67.
 
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-128-body-board-from-a-vendor-cad-file) carries
 traps 19-28 with the measured numbers, its
 [fourth part](MODELING.md#fourth-part-per-pin-bodies-out-of-pad-data) is per-pin
-bodies, and its closing section is the process
+bodies, its
+[eighth part](MODELING.md#eighth-part-turning-a-6-way-connector-into-a-12-way-one-and-the-cuts-a-pattern-leaves-behind)
+is the pattern/cut audit and the no-patterns rebuild, and its closing section is the process
 post-mortem (probe before you build, compute the answer first, verify what you hand
 over). Runnable examples: [tests/jobs/make_box.py](../tests/jobs/make_box.py),
 [tests/jobs/make_bracket.py](../tests/jobs/make_bracket.py), and two full boards -
@@ -348,7 +378,10 @@ the 128-body Arduino MEGA 2560 (102 header pins, one solid each) at
 `D:\桌面文件\车架复刻交付\arduino-mega2560\build_mega.py` and the 93-body 16-channel
 relay board (70 pins) at `D:\桌面文件\车架复刻交付\relay-board\build_relay_board.py` (the latter
 is the one to copy for a new board: layout table at the top, analytic expectations
-next, then build, verify, export, render).
+next, then build, verify, export, render). For a part that will be re-scaled, copy
+`D:\桌面文件\车架复刻交付\spl122-build\build_spl122.py` instead - it is the same shape of
+script but with every repetition carried in one sketch and no patterns at all
+(rule 54), plus the retry-across-flags cut helper from rule 52.
 
 ## Workflows
 

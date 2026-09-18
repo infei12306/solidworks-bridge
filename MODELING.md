@@ -728,7 +728,7 @@ its effect on the thing being handed over. The brief allows a few millimetres pr
 the error is never *larger* than reality, which is only checkable if the residuals are
 written down.
 
-## Sixth part: 172 centre points on two boards, and the point-creation flake
+## Seventh part: 172 centre points on two boards, and the point-creation flake
 
 Task: one sketch point on the **centre of the wire-entry face** of every connector pin -
 top faces on the two pin headers, but **side** faces on the relay screw terminals,
@@ -921,6 +921,259 @@ With that, all five probe sketches persisted side by side and the real job put *
 `FirstFeature`/`GetNextFeature` walk. Lesson: after building a large set of features,
 **count them in the tree** - per-item return codes were all `True` while 171 of 172
 sketches did not exist.
+
+## Eighth part: turning a 6-way connector into a 12-way one, and the cuts a pattern leaves behind
+
+Task: a lever wire connector sold as **SPL-122 / "二进十二出"** (2 in, 12 out) had to go into a
+wiring-harness assembly. No model of it exists anywhere, so the job became "take the same
+family's 6-way model (`Suplin SPL-62`, native `.SLDPRT`, 66 features) and grow it".
+
+This part is mostly one lesson with teeth: **a linear pattern is not the only thing that
+repeats geometry, and editing the pattern count touches only what is in the pattern.**
+
+The frame of the source model: `X` = the pole row, `Y` = height, `Z` = wire direction.
+Measured from the solid, not from the docs:
+
+| quantity | value |
+|---|---|
+| pole pitch | **5.2 mm** |
+| lever body | 2.8 (X) x 3.606 (Y) x 14.7 (Z), a separate solid each |
+| wire bore | radius **2.15 mm**, centreline `y = -2.9`, axis along `Z` |
+| shell, 6+2 | 34.599 (X) x 16.275 (Y) x 41.267 (Z) |
+| bodies | 9 = 1 shell + 6 output levers + 2 input levers |
+
+### 60. Bumping a linear pattern's instance count silently leaves every non-patterned repeat behind
+
+Three features in the tree look like the whole story, and only two of them are:
+
+```
+F041  Линейный массив1  LPattern  D1TotalInstances=2  spacing=0.0052  rev=True
+      PatternFeatureArray = ['Бобышка-Вытянуть3', 'Вырез-Вытянуть15']      <- the 2 input levers
+F046  Линейный массив2  LPattern  D1TotalInstances=3  spacing=0.0052  rev=False
+      PatternFeatureArray = ['Бобышка-Вытянуть4', 'Вырез-Вытянуть16']      <- output levers
+F047  Линейный массив5  LPattern  D1TotalInstances=4  spacing=0.0052  rev=True
+      PatternFeatureArray = ['Вырез-Вытянуть16', 'Бобышка-Вытянуть4']      <- the SAME seed pair
+```
+
+The output row is **two patterns sharing one seed** (`3 + 4 - 1 = 6`), one running `+X` and
+one `-X`. So 12 poles is `F046 : 3 -> 6` and `F047 : 4 -> 7` (`6 + 7 - 1 = 12`), and the
+housing is a single extrusion along `X`, so `Бобышка-Вытянуть1 : 33.700 -> 64.900 mm`.
+
+Both edits return `True` and the measurement agrees:
+
+```
+Линейный массив2 : D1TotalInstances 3 -> 6   ModifyDefinition=True
+Линейный массив5 : D1TotalInstances 4 -> 7   ModifyDefinition=True
+ForceRebuild3 -> True
+15 BODIES   TOTAL X extent = -30.000 .. 30.000  (len 60.000 mm)
+```
+
+12 levers, spanning exactly 60.000 mm. **And the wire holes were still 6.**
+
+`Вырез-Вытянуть6` is a single cut whose sketch `Эскиз8` holds **all six circles itself**
+(`x = -13.0 ... +13.0`, `y = -2.90`, r 2.15) and is in no pattern. Patterning it would have
+been wrong (it would stamp the same six holes at each instance), and nothing about the
+pattern edit told you it existed. The only way the gap showed up was by **counting**:
+
+```
+BEFORE: 16 circular edges r~2.15, distinct X = [-13.0 -7.8 -2.6 2.6 7.8 13.0]     <- 6
+AFTER : 32 circular edges r~2.15, distinct X = [-28.6 ... +28.6]                 <- 12
+```
+
+**Before you touch a third-party multi-instance model, enumerate the repeats that are not
+in a pattern** (see 61 for the cheap way), and **after** the edit verify by counting the
+entity class - bores, rims, bodies - not by the feature's return value.
+
+### 61. The cheapest audit of a foreign tree: read every sketch's own 2D extent
+
+`ISketch.GetSketchPoints2()` -> `ISketchPoint.X/Y/Z` gives the sketch's **local** coordinates
+(the third is always 0), so one pass over the tree prints a fingerprint per sketch. On
+SPL-62 that immediately separates the features that grow from the ones that will not:
+
+| feature | sketch | x range (mm) | verdict |
+|---|---|---|---|
+| `Вырез-Вытянуть2` | `Эскиз3` | -32.45 .. 32.45 | constrained to the body -> **grew by itself** |
+| `Вырез-Вытянуть11` | `Эскиз12` | -32.45 .. 32.45 | grew by itself |
+| `Вырез-Вытянуть-Тонкостенный1` | `Эскиз13` | -32.45 .. 32.45 | grew by itself |
+| `Вырез-Вытянуть6` | `Эскиз8` | -13.00 .. 13.00 | the 6 wire holes -> **stale** |
+| `Вырез-Вытянуть10` | `Эскиз9` | -14.45 .. 14.45 | the 6 bay windows -> **stale** |
+| `Вырез-Вытянуть14` | `Эскиз18` | -19.48 .. 19.48 | stale |
+| `Вырез-Вытянуть-Тонкостенный2` | `Эскиз14` | -19.85 .. 19.85 | stale |
+| `Вырез-Вытянуть1` + mirror | `Эскиз2` | -19.50 .. 0 | stale - this is the one that leaves blank blocks at both ends |
+
+Sketch-local and model axes coincide when the sketch plane's normal is `Z` (the front
+plane), which is the common case for a part laid out in `X`; confirm it by checking that
+the sketch's `x` range brackets the model `X` you already measured.
+
+### 62. A blind cut's direction does **not** follow the boss's convention, and a wrong guess is `None`
+
+Sampling a 20 mm part instead of the 1 000-line one, on the **front plane** of a fresh
+`NewPart`:
+
+```python
+# boss: +Z, works
+call(fm, "FeatureExtrusion3", True, False, False, 0, 0, mm(depth), 0.0, ...)
+
+# cut: T1=T2=0 (blind) with the SAME triple returned None and cut nothing
+call(fm, "FeatureCut4", False, False, False, 0, 0, mm(depth), 0.0, ...)
+```
+
+Measured working combinations, all in one build:
+
+| feature | plane | what it does | `(Sd, Flip, Dir)` that worked |
+|---|---|---|---|
+| output bores | front | blind 12 mm along **+Z** | `(True, False, True)` |
+| input bores | front | blind 25.8 mm from a 12 mm start offset, **+Z** | `(True, False, True)` |
+| lever windows | top | blind 9.5 mm up (**+Y**) from a 4.5 mm start offset | `(True, False, False)` |
+| ear holes | top | through-all both ways | `(False, False, False)` |
+
+Through-all is direction-independent, which is why the earlier `cut_through` helper worked
+with `Sd=False` and hid this. `None` is the only signal - there is no error code.
+
+**Retry across the combinations rather than reasoning about them**, and remember that a
+failed feature leaves its sketch **open** (trap 17), so the retry has to clean up first:
+
+```python
+CUT_VARIANTS = [(True, False, False), (False, False, True), (False, True, False),
+                (True, False, True), (True, True, False)]
+
+def cut(depth, start=0.0, through=False, draw=None):
+    t1 = t2 = 1 if through else 0            # 0 = swEndCondBlind
+    d1 = 0.0 if through else mm(depth)
+    t0 = 3 if start else 0                   # 3 = swStartOffset
+    for (sd, flip, dr) in ([(False, False, False)] if through else CUT_VARIANTS):
+        draw()                               # re-create the sketch from scratch
+        call(d, "SetAddToDB", False)
+        f = call(fm, "FeatureCut4", sd, flip, dr, t1, t2, d1, 0.0, False, False,
+                 False, False, 0.0, 0.0, False, False, False, False, False, False,
+                 True, False, False, False, t0, mm(start), False, True)
+        if f is not None:
+            return cast(f, "IFeature")
+        drop_last_sketch()                   # exit + delete the orphan
+
+def drop_last_sketch():
+    if getv(sm, "ActiveSketch") is not None:
+        sm.InsertSketch(True)                # close the dangling sketch
+    P(d, "ClearSelection2", True)
+    f = P(d, "FeatureByPositionReverse", 0)
+    if f is not None and P(cast(f, "IFeature"), "GetTypeName2") == "ProfileFeature":
+        cast(f, "IFeature").Select2(False, 0)
+        P(d, "EditDelete")
+    P(d, "ClearSelection2", True)
+```
+
+### 63. Capture a zero-error baseline **before** editing a foreign model
+
+`IFeature.GetErrorCode()` is `0` for clean. Walking all 66 features of SPL-62 recorded **66
+zeros**; after the edit exactly one was non-zero:
+
+```
+F061 | Вырез-Вытянуть-Тонкостенный8 | CutThin | err=1
+```
+
+That single number is what proved the fault was introduced rather than inherited - and it
+also explains a `ForceRebuild3 -> False` that would otherwise have looked like a failed
+edit while the geometry was in fact correct. Take the baseline first; you cannot recover it
+afterwards without a pristine copy.
+
+### 64. `IModelDoc2.EditSketch()` opens the selected sketch; `InsertSketch(True)` closes it
+
+To add geometry to an existing sketch, no `SelectByID2` and no `"SKETCH"` entity type is
+needed (so trap 8's `Callout` argument never comes up):
+
+```python
+P(d, "ClearSelection2", True)
+sketch_feature.Select2(False, 0)         # IFeature.Select2
+d.EditSketch()                            # returns None - the return value proves nothing
+assert getv(sm, "ActiveSketch") is not None
+call(d, "SetAddToDB", True)
+sm.CreateCircleByRadius(mm(x), mm(y), 0.0, mm(r))
+call(d, "SetAddToDB", False)
+sm.InsertSketch(True)                     # back out
+P(d, "ClearSelection2", True)
+```
+
+Inside a front-plane sketch the local frame **is** model `(X, Y) - verified by measuring the
+bores that came out, not by assuming: the six added circles landed at exactly
+`x = ±18.2 / ±23.4 / ±28.6`, `y = -2.90`, which is where they were asked for.
+
+### 65. `ISketch.GetLineCount2` takes exactly one argument
+
+`GetLineCount2(0, 0)` raises `TypeError: ISketch.GetLineCount2() takes from 1 to 2 positional
+arguments but 3 were given`. One pass of the tree audit died on every sketch because of it.
+`GetArcCount()` takes none.
+
+### 66. `IBody2.GetFeature()` does not exist on this build
+
+`AttributeError: ...IBody2... object has no attribute 'GetFeature'`. "Which feature made
+this body" is not answerable that way; use the tree walk, or suppress a candidate and
+re-measure the body set.
+
+### 67. `SaveAs3` to a native `.SLDPRT` returns **64** and still writes the file
+
+The bridge's `save` command only owns the neutral translators:
+
+```
+ERROR  : unknown export format 'sldprt'
+  -> Known formats: 3mf, iges, pdf, step, stl, x_t
+```
+
+Save a native part from inside a job instead, and do **not** treat a non-zero code as
+failure - check the file and the title change:
+
+```python
+code = d.SaveAs3(r"...\part.SLDPRT", 0, 1)    # swSaveAsCurrentVersion, swSaveAsOptions_Silent
+# measured: code = 64, file written (814 976 bytes), GetTitle() -> new name, GetSaveFlag() -> False
+```
+
+`swSaveAsOptions_Silent = 1` and `swSaveAsCurrentVersion = 0` are both in the generated
+stubs - look them up rather than recalling (rule 34).
+
+### 68. The structural answer: build the part with **no patterns at all**
+
+After 60, the rebuild took the opposite approach deliberately. Every repetition lives in
+**one** sketch, and nothing is patterned:
+
+| feature | one sketch holds | one feature produces |
+|---|---|---|
+| output bores | 12 circles | 12 bores |
+| input bores | 2 circles | 2 bores |
+| lever windows | 14 rectangles | 14 pockets |
+| levers | 14 rectangles, `merge=False` | 14 separate bodies |
+
+Result, measured on the finished solid:
+
+```
+BODIES:   15  (expect 15 = 1 shell + 12 output levers + 2 input levers)
+ENVELOPE: x -30.400..30.400 (60.800)   y 0.000..16.500   z 0.000..37.800
+bore rim edges r~2.1: 54 ;  distinct bore X: 12
+SaveAs3 -> 0
+```
+
+Changing the pole count is now one constant (`N_OUT = 12`), and the class of bug in 60 is
+**structurally impossible** rather than merely tested for. When you know a model will be
+re-scaled, prefer "all copies in one sketch" over a pattern.
+
+The same job also re-confirmed trap 13's coordinate convention on the **top** plane:
+local `(u, v) = (X, -Z)`, so a rectangle at model `z = 6.0` is drawn at `v = -6.0`. The
+T-shaped footprint (a 60.8-wide output block plus a 15-wide input block offset along `Z`)
+came out with the correct `60.800 x 37.800` plan on the first try because of it.
+
+### 69. Sourcing: search the part number, then chase the remix chain
+
+Not an API trap, but it decided this whole job. "lever wire connector" returns thousands of
+mounting brackets; the part is a **SPL-122**, and searching *that* is what surfaced the
+family (`SPL-62 / SPL-93 / LT-633`). The exact 12-way model does not exist anywhere, and the
+only true 1:1 body found was reached by following a remix link backwards
+(`thingiverse.com/thing:6710306` -> "Based on the original model" ->
+`printables.com/model/842131`). Two licence facts that a search snippet will not tell you:
+
+* GrabCAD community uploads fall under ToU **§6.2 - non-commercial internal use only**.
+* Printables `842131` renders its licence as an **image**; the markdown extraction of the
+  page shows nothing. Read the block, and note it is **CC BY-NC 4.0** (remix allowed,
+  commercial use not, and Printables itself flags it "not a Free Cultural Work").
+
+Read the licence from the model's own page before it goes into anything deliverable.
 
 ## Process: what this project cost, and how to run the next one
 
