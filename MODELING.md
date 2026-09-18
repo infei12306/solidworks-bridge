@@ -1270,6 +1270,148 @@ $hex = ($b | ForEach-Object { $_.ToString('X2') }) -join ''
 loads fine in the user's own browser. Say so and hand over the URL instead of burning turns
 on retries.
 
+## Ninth part: an illuminated pushbutton into a mushroom emergency stop
+
+The part: a `LA38-11D` (22 mm panel pushbutton, flush illuminated head, 1NO+1NC) had to
+become a `LA38-11ZS` (the same series' mushroom-head emergency stop). The manufacturer's own
+photo gave three numbers - total height **75 mm**, footprint **32 x 29**, panel hole **Ø22** -
+and nothing else. No dimensioned drawing, no data sheet.
+
+### 72. On a foreign model, probe late-bound. `getv` is 2-argument and `cast(..,"ISketch")` was dead
+
+Two readings that looked right and were not:
+
+```python
+getv(d, "GetPartBox", True)          # TypeError: getv() takes 2 positional arguments
+cast(f, "ISketch") -> GetLineCount2  # com_error on EVERY sketch member
+```
+
+`getv(obj, name)` reads a *property* or a *zero-argument* method; anything with arguments
+goes through `call(obj, name, *args)`. And on this model the generated `ISketch` interface
+resolved every member to a COM error, while the **raw dispatch object** answered fine. So the
+working pattern for a foreign part is the same late-bound helper used in the SPL jobs:
+
+```python
+def P(obj, name, *a):
+    v = getattr(obj, name)                      # dynamic dispatch
+    return v(*a) if isinstance(v, types.MethodType) else v
+```
+
+`P(cast(f, "IFeature"), "GetSpecificFeature2")` -> `P(sk, "GetSketchSegments")` ->
+`cast(seg, "ISketchLine")` / `"ISketchArc"` all worked. Reach for `getv`/`call` on the
+*modelling* side (where `swcore` is bound) and `P` on the *interrogation* side.
+
+`GetTypeName2` reads `"ProfileFeature"` for a sketch and **`"ICE"`** for an extrude on this
+build, while `GetTypeName` says `"Boss"` / `"Cut"` / `"Revolution"`. Test `GetTypeName2 ==
+"ProfileFeature"` for sketches and use `GetTypeName` for everything else.
+
+### 73. Validate a new feature against a BODY, never against the whole-part envelope
+
+This cost four runs. The job added a Ø32 x 4 mm collar at `Y 0..4` and checked
+`envelope.Ymax == 4` - but the source model already reaches `Ymax = 13`, so the check failed
+for every flag triple and the job reported the false conclusion *"no (Sd,Flip,Dir) combination
+puts material at Y<=4"*, when in fact the very first triple had worked. The fix is to look for
+**a new body whose box is the intent**:
+
+```python
+def find_new_body(ymin, ymax, dia=None, tol=0.05):
+    for b in solids():
+        box = [v*1000 for v in P(b, "GetBodyBox")]      # [x0,y0,z0,x1,y1,z1]
+        if abs(box[1]-ymin) < tol and abs(box[4]-ymax) < tol:
+            if dia is None or (abs(box[3]-box[0]-dia) < tol and abs(box[5]-box[2]-dia) < tol):
+                return b
+    return None
+```
+
+### 74. Make every new feature direction-agnostic, and roll the failures back with `EditUndo2(1)`
+
+The same `(Sd, Flip, Dir)` triple does not mean the same thing on the Top Plane as on the
+Front Plane. On the Top Plane (normal `+Y`) a boss went `-Y` with the triple that goes `+Z` on
+the Front Plane. Rather than reason about it, loop the triples, measure, and undo the misses:
+
+```python
+for (sd, flip, dr) in [(True,False,False), (True,True,False), (False,False,False),
+                       (False,False,True), (True,False,True), (False,True,False)]:
+    new_sketch(plane); draw(); end_sketch()
+    f = P(fm, "FeatureExtrusion3", sd, flip, dr, SW_BLIND, SW_BLIND, ...)
+    if f is not None and find_new_body(y0, y1, dia):
+        return f
+    P(d, "ClearSelection2", True); P(d, "EditUndo2", 1)      # clean rollback
+```
+
+`FeatureRevolve2` got the same treatment with the `(SingleDir, ReverseDir)` pairs. The undo is
+what makes the retry safe: without it the wrong body sits there and poisons every later
+measurement. Measured winners on this part: **`(True,False,False)`** for both extrudes off the
+Top Plane, **`(True,False)`** for the revolve off the Front Plane.
+
+### 75. Make the job idempotent: re-copy from the pristine source, and pre-close your own leftovers
+
+A run that dies mid-way leaves its document **open**, which locks the file, so the next run
+dies at `shutil.copyfile` with `PermissionError: [Errno 13]`. Fix both ends:
+
+```python
+for t in list(session.titles()):
+    if "LA38-11ZS" in str(t):                 # only MY artifacts - never the user's
+        session.close_document(t, discard_changes=True)
+shutil.copyfile(ORIGINAL, WORKING)            # every run starts from the download
+```
+
+and close the deliverable again after `SaveAs3`. A job that can be re-run from scratch is what
+let the direction bug in 73/74 be found by iteration instead of by one careful guess.
+
+### 76. `ShowNamedView2` needs the **UI language's** view names, and returns True either way
+
+`ShowNamedView2("*Isometric", 7)` returned `True`, `SaveBMP` returned `True`, eight files of
+4 410 054 bytes each - and all eight were **byte-identical**. The install is Chinese, so the
+names are `*等轴测 / *前视 / *后视 / *左视 / *右视 / *上视 / *下视`. Hash the renders inside the
+job; "different sizes" is not a check when every BMP is the same canvas size.
+
+### 77. Do not promise body colours on a foreign multi-body part
+
+Two APIs, two different failures:
+
+| call | returned | effect |
+|---|---|---|
+| `IBody2.MaterialPropertyValues = arr` | no error | **read-back empty, render unchanged** - inert |
+| `IFeature.SetMaterialPropertyValues(arr)` | `True` | took on the extruded collar, **ignored** on the revolve and the second extrusion, which kept the source model's inherited face colours (one contact block renders orange from the front and green from the back) |
+
+Colour on an imported multi-body tree is inherited from the source's face colours and is not
+reliably overridable. Say so and hand the user a 10-second manual step, or suppress the
+source's colour-carrying features first.
+
+### 78. To change the shape class of a foreign model's front end, add an ENCLOSING body
+
+The tempting route - delete `Revolve1` and re-cut the whole head - is wrong here: `Revolve1`
+spans `Y -27..+13`, so it is also the central core of the 中座, and suppressing it guts the
+part. What worked instead, with **zero edits to the foreign tree**:
+
+```
+source head:  Ø28 x 13 neck at Y 0..13  +  Ø23 x 1 lens at Y 11.5..12.5
+new head   :  Ø32 x 4 collar (Y 0..4) + Ø30 x 6 neck (Y 4..10) + Ø36 dome (Y 10..29)
+```
+
+Every new radius is larger than the old one it covers, so the old head ends up *inside* the new
+one and disappears from every view. Total height landed on **75.000 mm** on the first correct
+run, and the hard-won 中座 + contact-block geometry was never touched. Generalises trap 54:
+when a rebuild is risky, **enclose rather than replace.**
+
+### 79. Read dimensions off a product photo by finding its own leader lines, and cross-check two scales
+
+A render of a part with printed dimension callouts is measurable without a data sheet:
+
+1. Segment by colour (`red`, `yellow`, `dark`, `blue`) to get each band's vertical run - that
+   gives every band's height, and the widest run of each colour gives its diameter.
+2. Find the dimension line itself by scanning for the **longest dark run** in a column band
+   beside the part (found: `x=119`, 333 px) or in a row band below it.
+3. Fix the scale from the labelled dimension, then convert every band.
+
+**Cross-check two scales and report the disagreement.** Here `total = 387 px` against the
+printed 75 mm gives 5.16 px/mm, while `flange = 173 px` against the printed 32 mm gives
+5.41 px/mm - a 5% conflict in the manufacturer's own artwork. The derived head diameter,
+186 px, is 36.0 mm under the first scale and 34.4 mm under the second, so **Ø36 with ±2 mm of
+honest uncertainty** is the right thing to build and to say. Quoting one scale to three decimals
+would have been false precision.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.

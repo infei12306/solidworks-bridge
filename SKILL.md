@@ -371,6 +371,26 @@ example: 50x30x20 mm box → mass properties → save → render.
     same-spec part from another brand only shares the envelope. Verify each candidate by
     reading its render, never its title - the top same-spec hit rendered the boxed variant.
     Trap 71.
+57. **Validate a new feature against a BODY, never the whole-part envelope.** A check of
+    `Ymax == 4` on a part already reaching `Ymax = 13` rejects every direction flag and
+    reports "no combination works" when the first one was fine. Find the new body whose box
+    matches the intent (`GetBodyBox` is metres, order `[x0,y0,z0,x1,y1,z1]`). Traps 73-74.
+58. **On a foreign model, read members late-bound through `P(obj, name, *a)`.** `getv` is
+    2-argument and `cast(f, "ISketch")` returned a COM error for every sketch member here,
+    while raw dispatch worked. `GetTypeName2` is `ProfileFeature` for a sketch and `ICE` for
+    an extrude; `GetTypeName` says `Boss`/`Cut`/`Revolution`. Trap 72.
+59. **Build a re-runnable job: re-copy from the pristine source and pre-close your own
+    leftovers.** A failed run leaves its document open and locks the file, so the next run
+    dies with `PermissionError` on `copyfile`. Match only your own artifact names, never the
+    user's. Trap 75.
+60. **To change a foreign model's front end, add an ENCLOSING body - do not delete and
+    re-cut.** `Revolve1` spanned `Y -27..+13` and was also the 中座's core, so suppressing it
+    would have gutted the part. Three stacked solids with radii larger than the head they
+    cover hit 75.000 mm exactly with zero edits to the foreign tree. Trap 78.
+61. **Do not promise body colours on a foreign multi-body part.** `IBody2.
+    MaterialPropertyValues` set without error but was inert (empty read-back, unchanged
+    render); `IFeature.SetMaterialPropertyValues` returned `True` and applied to one feature
+    of three, the rest keeping the source's inherited face colours. Trap 77.
 
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-128-body-board-from-a-vendor-cad-file) carries
