@@ -1641,6 +1641,43 @@ Also worth having in the log:
   about the pole group as the original was - and left the untouched +X end (fillets, chamfers, ribs)
   completely original.
 
+### 89. The whole "一对多" family in one job - suppression picks the pole count, cuts pick the length
+
+Trap 88 was the method; this is it applied. From the single vendor part `SPL-62-source.SLDPRT`
+(6 out + 2 in) four parts came out in one ~46 s job, **every one with 0 rebuild errors**:
+
+| part | suppress | trim (through-all-both, X bands) | result | bodies |
+|---|---|---|---|---|
+| `PCT-212-一对一-2孔` | `массив1+2+5` | `X<-3.9`, `X>9.1` | 1 out (+2.6) + 1 in | 3 |
+| `PCT-213-一对二-3孔` | `массив1+5` | `X<-3.9`, `X>10.4` | 2 out (+2.6/+7.8) + 1 in | 4 |
+| `PCT-214-一对三-4孔` | `массив1+5` | `X<-3.9` | 3 out (+2.6/+7.8/+13.0) + 1 in | 5 |
+| `PCT-215-一对四-5孔` | `массив1+2` | `X>9.1` | 4 out (-13.0/-7.8/-2.6/+2.6) + 1 in | 6 |
+
+Three things made this a single pass instead of five:
+
+1. **Both rectangles in ONE sketch, one `FeatureCut4`.** A cut feature takes multiple contours, so
+   left and right trims are one feature - and a `through=True` cut with `t1=t2=1` is
+   direction-independent, so it cannot accidentally remove the whole part.
+2. **Copy the vendor file inside the job** (`shutil.copyfile`) rather than with a shell command: the
+   shell cannot overwrite a file that SOLIDWORKS has open, and the earlier attempts died on exactly
+   that (`The process cannot access the file ... because it is being used by another process`).
+   Also remember to close the *previous* job's documents first - a stale `PCT-*` document left open
+   is what blocked the copy.
+3. **Verify per part and fail loudly**: expected body count, the sorted X centres of the output
+   levers (`Z < 0`) and input levers (`Z > 0`), the shell's X span, and the feature error count.
+   With the mapping above, `bodies = 2 + n_out` is an exact assertion - a wrong suppression set or a
+   misplaced trim shows up immediately instead of in a render.
+
+**Deliverable layout that the user asked for** (worth copying): a dedicated folder
+`车架复刻交付\一对多端子\` holding the four `SLDPRT` + 3 renders each (iso/top/front, Chinese view
+names) + a `README.md` with the measured table, the method, the known compromises, and the
+reproduction command + a `脚本\` subfolder with the build and probe scripts. Keep the *source*
+folder (`spl122-build\`) untouched as the original.
+
+See also [SOURCES-模型网站.md](SOURCES-模型网站.md) - the measured verdict on every model site used
+so far (which have vendor STEP, which need a login, which fight scrapers, and the licensing truth:
+there is **no CC0/MIT CAD for breakers, terminals or switches**).
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.

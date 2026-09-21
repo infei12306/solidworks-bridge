@@ -545,6 +545,15 @@ script but with every repetition carried in one sketch and no patterns at all
 | `-2147417848 被调用的对象已与其客户端断开连接` from every `IFace2` call | `RPC_E_DISCONNECTED`: too many face proxies on an imported part. Cap the probe (first ~50 faces) and report `face_count` first; for "is there a bore of radius R", histogram `CylinderParams[6]` instead (trap 80). |
 | Two cylindrical faces, same radius and axis | One physical bore SW split in two. Group by radius+axis and SUM the areas before calling it a hole (trap 81). |
 | A user's bore will not take a concentric mate | Mate on **temporary axes** (视图 → 临时轴) rather than the face; or rebuild the hole with 异型孔向导; or 删除面 → 删除并修补 the split fragments (trap 82). |
+| `IFeature.ModifyDefinition` returns `False`, a set property re-reads unchanged | Pattern instance counts are **not writable** on this build. Suppress whole patterns to change a pole count (trap 88/89). |
+| Redrawing a sketch makes dozens of features error at once | That sketch was a core reference. Trim with a `FeatureCut4` instead — a cut breaks no references (trap 88). |
+| `cast(seg,"IEntity").Select2` -> `无效的参数数目` | Call `Select2` **directly** on the `ISketchSegment` dispatch; or `SelectByID2(seg.GetName(),"SKETCHSEGMENT",...)` (trap 88). |
+| `"*Isometric"` / `"*Top"` / `"*Front"` produce three identical PNGs | Use the **Chinese** view names `"*等轴测"` / `"*上视"` / `"*前视"`, and hash the PNGs to prove they differ (trap 88). |
+| Copy-Item fails: `being used by another process` | A stale document from your own earlier job is open. Close your documents first, then copy (trap 89). |
+
+**Where to find models:** [SOURCES-模型网站.md](SOURCES-模型网站.md) - measured verdicts for
+正泰资料中心, GrabCAD, 3DContentCentral, 迪威模型, PARTcommunity/WAGO, McMaster, TraceParts, NKK and
+the Chinese paid sites, including which need a login, which fight scrapers, and the licensing truth.
 
 Design decisions, the measured numbers, and the full pitfall log:
 [REFERENCE.md](REFERENCE.md).
