@@ -1549,6 +1549,39 @@ refinement to trap 84: CHINT's 三维模型图 set *does* cover 主令电器 (NP
 HZ5/YBLX 开关) - it is only the bought-in **KCD rocker** that is missing. Check the product line,
 per trademark, not per brand.
 
+### 86. Read the family code off the part, not the description - lever wire connectors are `PCT-21n` and `KV223-nP`
+
+Six photos of a harness with orange-lever push-in connectors, and the user's own words
+("一对三 / 一对二 / 六路一对一 / 八路一对一") are enough to name every part **without** a data sheet,
+because the housing carries the rating. Cropping to the engraved text and enlarging 4x read
+**`32A 250V 4KV`** on the splitter - that is the `PCT-21x` family signature, and the **lever count
+is the model number**:
+
+| shape seen | family | part | what it is |
+|---|---|---|---|
+| 3 levers one face + 1 opposite | `PCT-21n` | **PCT-214** | 4 holes, 1 in / 3 out = 一对三 |
+| 2 levers + 1 opposite | `PCT-21n` | **PCT-213** | 3 holes, 1 in / 2 out = 一对二 |
+| 2 columns x 6 levers, 6 entry holes down the middle of the top face | `KV223-nP` | **KV223-6P** | six independent 1-to-1 = 六路一对一 |
+| same, 8 columns | `KV223-nP` | **KV223-8P** | 八进八出 (Taobao confirms the name) |
+
+Where the geometry actually is, checked this session:
+
+- **3DContentCentral User Library has the exact clone family**, contributed by `simuel liu`, category
+  Terminal Crimps: `KV223-2P/3P/4P/5P/6P`. Direct ids: **5P = 3222026**, **6P = 2812840**;
+  the rest sit on `parts/supplier/User-Library/30.aspx`. Free, but **login required** - as is
+  everything on 3DCC, GrabCAD and 迪威模型, so none of it can be fetched by a job.
+- **迪威模型 (`3dwhere.com`) sells SOLIDWORKS-native Chinese parts for ￥1** and its search page is
+  plain HTML (a `read_page` works where 3dcontentcentral's own pages 500). `KV223-2P/3P/4P/5P/6P`
+  plus `快速接线端子5进5出` and `20进20出` are all there; one `1X触点` entry is ￥0.
+- **WAGO Series 222 on 3Dfindit is the original this family clones** (`222-412/413/414/415` =
+  2/3/4/5 conductor), and GrabCAD's `wago-4-pole-or-wago-222-414` is described in its own text as
+  "**PCT-214 4 conductor**" - i.e. the 一对三, already modelled by someone else.
+- **No public `KV223-8P` model was found.** Searches hit the product everywhere and the geometry
+  nowhere, so for the 8-way the honest answer is: take the 6P body and pattern two more columns, or
+  build it. Do not promise a download that does not exist.
+- 正泰's 接线端子 三维模型图 (`TC-2004接线端子三维模型202510.stp`) is a **DIN-rail screw terminal
+  strip**, not this lever family - the same "product line, not brand" trap as 84.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
