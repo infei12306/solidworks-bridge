@@ -542,6 +542,9 @@ script but with every repetition carried in one sketch and no patterns at all
 | Mesh volume far below `GetMassProperties2` after assembling parts | Negative-determinant placement inverted the facets; flip the winding (rule 48). |
 | `GetBodies2(1)` returns 0 and `(0)` returns everything | The type flag does not filter here; count from the STEP instead (rule 49). |
 | Four "different" renders share a SHA-256 | Two of them are the same view; hash every PNG (rule 50). |
+| `-2147417848 被调用的对象已与其客户端断开连接` from every `IFace2` call | `RPC_E_DISCONNECTED`: too many face proxies on an imported part. Cap the probe (first ~50 faces) and report `face_count` first; for "is there a bore of radius R", histogram `CylinderParams[6]` instead (trap 80). |
+| Two cylindrical faces, same radius and axis | One physical bore SW split in two. Group by radius+axis and SUM the areas before calling it a hole (trap 81). |
+| A user's bore will not take a concentric mate | Mate on **temporary axes** (视图 → 临时轴) rather than the face; or rebuild the hole with 异型孔向导; or 删除面 → 删除并修补 the split fragments (trap 82). |
 
 Design decisions, the measured numbers, and the full pitfall log:
 [REFERENCE.md](REFERENCE.md).

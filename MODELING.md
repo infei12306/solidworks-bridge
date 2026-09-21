@@ -1412,6 +1412,53 @@ printed 75 mm gives 5.16 px/mm, while `flange = 173 px` against the printed 32 m
 honest uncertainty** is the right thing to build and to say. Quoting one scale to three decimals
 would have been false precision.
 
+### 80. Face-level enumeration on a big foreign part dies with `RPC_E_DISCONNECTED`, and it is a dead end, not a flake
+
+`face_dump.py` walked `IBody2.GetFaces()` on a 1 650-face imported frame part and every single
+`IFace2` method answered:
+
+```
+ERR:(-2147417848, '被调用的对象已与其客户端断开连接。', None, None)
+```
+
+`-2147417848` is `RPC_E_DISCONNECTED`. It is **not** a transient COM hiccup and retrying does not
+help; the marshalled face proxies were never usable at that count. Two consequences:
+
+- **Cap every face-level probe** (e.g. first 50 faces) and **always record `face_count` first**, so a
+  run that returns 1 650 errors still tells you the scale of the part. A probe that prints only
+  failures teaches nothing.
+- For "is there a bore of radius R" use the *aggregate* route that already worked
+  (`holescan1`): walk bodies, ask each face `IsCylinder`, keep `CylinderParams[6]`, and
+  **histogram the radii**. That ran 132 s over 38 documents and never tripped the disconnect.
+  Per-face classification is the wrong granularity on imported geometry.
+
+### 81. `IsCylinder` face counts are NOT hole counts - one physical bore can be several faces
+
+Measured on the vendor e-stop (`急停按钮[QG115-B8-11ZS]_ZS.SLDPRT`): the R10 bore at
+`(0, 61, 0)` around `+Y` reported **two** cylindrical faces, areas `251.3` and `62.8 mm²`.
+`251.3 + 62.8 = 314.1 = 2*pi*10*5.0`, i.e. one 5 mm-tall cylinder that SW split into two
+faces. Same trap in `000_3.SLDPRT`, one R11.85 face of `335.1 mm² = 2*pi*11.85*4.5`.
+
+So when counting holes: group faces by **radius + axis + collinearity**, then **sum the areas**
+and derive the height. Counting faces over-reports holes; and the split is exactly why a
+concentric mate picks "a fragment".
+
+### 82. When a bore will not mate, the fix is the axis or a rebuilt hole - never the face
+
+The user's question ("这个圆孔为什么切除是这个形状会导致其他装配体没有办法进行配合") has one
+resolution class. Ranked by cost:
+
+| # | fix | cost | when |
+|---|---|---|---|
+| 1 | **Mate on temporary axes**, not the cylindrical face (视图 → 临时轴; pick face, the axis appears, then 同轴心 axis-to-axis) | 1 min, no model edit | always try first - an axis is analytic and immune to a shredded face |
+| 2 | **Rebuild as a Hole Wizard hole** (异型孔向导, 完全贯穿) | one feature | when the model is yours / may be edited |
+| 3 | **Fix the cut direction**: sketch the circle on the plane the hole is normal to (insert a 基准面 on a slanted/curved host face first), cut 完全贯穿-两者 | one sketch + feature | original feature must be kept |
+| 4 | **Heal the face**: 插入 → 面 → 删除面 → 删除并修补, which stitches split fragments back into one cylinder | minutes | the split came from a chamfer/counterbore crossing the bore |
+
+Diagnosis in 10 s before choosing: select the bore face in the assembly and read the status bar.
+A radius (e.g. `R11.00`) means it is a true cylinder - use route 1. "样条曲面", or an impossible
+single full-circle selection, means the bore is already degenerate - use 2 or 4.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
