@@ -1613,6 +1613,34 @@ components of >=120 px. Measured on that GrabCAD page's own renders: **4, 4 and 
 the model is 4-conductor and no render of it is a five-way. `grabcad.com/screenshots/pics/...`
 returns `<!DOCTYPE` unless you send a `Referer:` header; with it, the PNG/JPEG comes down fine.
 
+### 88. To re-scope a foreign part, SUPPRESS and TRIM - never redraw its core sketch, and do not expect to edit a pattern's instance count
+
+Task: turn a downloaded 6-out/2-in lever connector (`SPL-62-source.SLDPRT`, **Russian feature
+names**: `Эскиз` sketch, `Бобышка-Вытянуть` boss-extrude, `Вырез-Вытянуть` cut-extrude,
+`Линейный массив` linear pattern, `Зеркальное отражение` mirror, `Скругление` fillet,
+`Фаска` chamfer) into a "一对多" family, **without a rebuild** because the user rejected the
+scripted version as ugly. Three measured walls, and the three ways through them:
+
+| what fails | measured behaviour | what works instead |
+|---|---|---|
+| `setattr(dfn,"D1TotalInstances",n)` + `IFeature.ModifyDefinition(dfn, app, None)` | `cast(defn,"ILinearPatternFeatureData")` **succeeds**, the property **reads** (2/3/4), the write re-reads unchanged, `ModifyDefinition` returns **False** every time | **suppress whole patterns**: pole count becomes a choice of suppression set. Measured on this part: suppress `массив1+массив2+массив5` -> **1 out + 1 in**; `массив1+массив2` -> **4 out + 1 in**; `массив1+массив5` -> **3 out + 1 in**; none -> 6 out + 2 in |
+| redraw the shell's core sketch (`Эскиз1`, a plain rectangle X +-19.5 / Y +-7.5) | delete 6 segments + `CreateCornerRectangle` -> **37 down-stream features error** (codes 1 and 71) and the solid degenerates | **trim with a cut**: a `FeatureCut4` through-all-both rectangle at `X < -3.9` gave the finished part with **0 errors**, because a cut cannot break a reference |
+| selecting sketch entities to delete/redraw | `call(cast(seg,"IEntity"),"Select2",True,0)` -> `com_error(-2147352562, '无效的参数数目')`; `Select4` -> type mismatch; `SelectByID2(str(GetID),"SKETCHSEGMENT",...)` -> False | **`call(seg,"Select2",True,0)` directly on the `ISketchSegment` dispatch works**, and `SelectByID2(seg.GetName(),"SKETCHSEGMENT",...)` works too (`GetName()` returns e.g. `'直线15'`) |
+
+Also worth having in the log:
+
+- **`ISketch::GetLines2(0)` returns a FLAT tuple, 12 numbers per line**, not objects:
+  `[a, b, c, 0, -1000, 31000, x1, y1, z1, x2, y2, z2]` in **metres**, and `b == 6000` marks a
+  **construction** line. That single call replaced an entire sketch-geometry probe.
+  `GetArcs2` takes no argument on this build (`GetArcs2(0)` -> TypeError).
+- **`ShowNamedView2` needs Chinese view names here**: `"*等轴测"`, `"*上视"`, `"*前视"` produce three
+  different PNGs, while `"*Isometric"`/`"*Top"`/`"*Front"` produced three byte-identical ones.
+  Hash the PNGs or you will ship the same view three times.
+- Choosing the trim plane: keep the vendor's own end margin. Its outermost pole is at +13.0 with the
+  body edge at +19.5 (6.5 mm), so trimming at `2.6 - 6.5 = -3.9` left the body exactly as symmetric
+  about the pole group as the original was - and left the untouched +X end (fillets, chamfers, ribs)
+  completely original.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
