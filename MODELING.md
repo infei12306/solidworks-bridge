@@ -1582,6 +1582,37 @@ Where the geometry actually is, checked this session:
 - 正泰's 接线端子 三维模型图 (`TC-2004接线端子三维模型202510.stp`) is a **DIN-rail screw terminal
   strip**, not this lever family - the same "product line, not brand" trap as 84.
 
+### 87. Count the poles yourself before recommending a link - WAGO 222 has NO 4-conductor, and a GrabCAD title can be a P/N that does not exist
+
+The user pushed back - "你自己拿你的视觉模型扫一下都对吗？一接三的我怎么点进去是个五路并联端子？" -
+and they were right about the link, though not about the part. Both halves are worth recording.
+
+**The part was right.** Two independent reads of the same housing agreed: my own 7x crop and
+`node vision.js` both counted **4 levers, 3 on the upper face and 1 on the lower**, with `32A 250VAC`
+engraved. 4 conductors, 1-in/3-out = `PCT-214`. When a count matters, ask for it twice by two
+routes - and **quote the numbers you actually measured**, because that is what lets a user check you.
+
+**The link was wrong, twice over.**
+
+1. **`222-414` does not exist.** The official WAGO PARTcommunity Series 222 list contains only
+   `222-412` (2-conductor), `222-413` (3-conductor) and **`222-415` (5-conductor)** - so anyone
+   hunting a 4-conductor near "222" lands on the **five-way parallel terminal**, which is exactly
+   what the user reported seeing. WAGO's classic 4-conductor lever nut is in **Series 221**
+   (`221-412/413/414/415` = 2/3/4/5; `221-413` verified 3-conductor). The GrabCAD listing
+   `wago-4-pole-or-wago-222-414` is **misnamed by its uploader** - its own files are
+   `Wago 4-Pole.stp/.prt/.igs/.stl`, but its gallery also carries `Wago 3-Pole` renders, so the page
+   reads as a different pole count than it is.
+2. **Two clone families are not interchangeable, and I listed them as if they were.**
+   `PCT-21n` = **1-in / n-out splitter** (213 = 3 holes, 214 = 4 holes, 215 = 5 holes);
+   `KV223-nP` = **n-in / n-out through** (`KV223-8P` is sold as 八进八出). Offering `KV223-5P`
+   anywhere near a "一对三" question guarantees the user opens a **five-way** part.
+
+**Verify a render instead of trusting its title.** The lever count is measurable from the image with
+no CAD: threshold the orange (R>170, 90<G<215, B<140, R-B>70, R-G>25) and count connected
+components of >=120 px. Measured on that GrabCAD page's own renders: **4, 4 and 3** levers - i.e.
+the model is 4-conductor and no render of it is a five-way. `grabcad.com/screenshots/pics/...`
+returns `<!DOCTYPE` unless you send a `Referer:` header; with it, the PNG/JPEG comes down fine.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
