@@ -1459,6 +1459,42 @@ Diagnosis in 10 s before choosing: select the bore face in the assembly and read
 A radius (e.g. `R11.00`) means it is a true cylinder - use route 1. "样条曲面", or an impossible
 single full-circle selection, means the bore is already degenerate - use 2 or 4.
 
+### 83. For a Chinese electrical component, the vendor's own STEP library beats every CAD portal - and it is scriptable
+
+CHINT (正泰) publishes **三维模型图** as `.stp` for hundreds of catalogue numbers, free and without an
+account, under 资料中心:
+
+- Browse: `https://www.chint.net/service/download/type` → 文档类型 = 三维模型图
+  (the list pages carry `type/20%2C21%2C72%2C143`, and `p/N.html` paginates).
+- Each row's `直接下载` points at `https://ztkbs.chint.com/kbs/upload/piecewise-file/<uuid>/<uuid>
+  ?expires=<b64 unix ts>&signature=<b64 hmac>&platformCode=...`. The pair is **signed and
+  short-lived** - `expires=MTc5MDE0Njc3Mg==` decodes to `1790146772`, i.e. ~3 days. Download
+  immediately and hand the user the *page*, not the signed URL.
+
+Measured this session, all three fetched with `curl.exe` straight from PowerShell:
+
+| file | bytes | content |
+|---|---|---|
+| `NB1-63H 1P&N小型断路器三维模型202404.stp` | 7 476 919 | 5 solids, 4 391 faces |
+| `NB5LE-63FB 1P&N剩余电流动作断路器三维模型202409.stp` | 19 352 731 | 57 solids (multi-variant layout, not one device) |
+| `NXHB-125 2P隔离开关三维模型202307.stp` | 5 178 186 | 18 solids, 3 025 faces - clean **80.5 x 36.05 x 76.96 mm** |
+
+Two things to carry forward:
+
+1. **`MANIFOLD_SOLID_BREP` / `ADVANCED_FACE` counts and the `CARTESIAN_POINT` bounding box are
+   readable from the STEP text with one regex**, no CAD needed - and they tell you whether you got
+   one device or a catalogue sheet. The 57-solid RCBO measured `311 x 240 x 250 mm`, which is the
+   tell that it is *not* a single 36 mm module; the 2P isolator measured a textbook
+   **80.5 x 36 x 77 mm** (DIN 43880: 18 mm per module, ~80 mm tall). **Always measure before
+   handing a downloaded STEP to a user as "the same part".**
+2. **`web_fetch` reaches `chint.net` only through the JS-rendering reader.** A plain fetch returns
+   `403 ... Denied by custom_acl`, and `www.chint.net` even failed DNS once. `read_page` got the
+   full list including the signed links. Portal sites behave the same way: `grabcad.com` and
+   `traceparts.com` both answered `403` (CloudFront / WAF) to a plain fetch but render fine through
+   `read_page`. Reference prices also hold: GrabCAD CHINT MCB eBG C10 single pole (STEP+IGES, 1 826
+   downloads) and 3DContentCentral's 16 A DIN-rail breaker are free-with-registration only - there
+   is **no CC0/MIT-licensed miniature circuit breaker CAD** anywhere, so never call one "open source".
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
