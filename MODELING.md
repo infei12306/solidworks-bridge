@@ -1519,6 +1519,36 @@ high quality (a 2026 KCD4 modelled to 31.10 mm with a size drawing beats anythin
 sites), so search it *by component family name* (`KCD1`, `KCD4`, `KCD11`) rather than by
 "rocker switch" alone - the family code is what the uploaders title with.
 
+### 85. The 产品资料 tab hides eight document kinds under signed links - only one of them is geometry, and CHINT's STEP scale is not consistent
+
+Same vendor, pilot lights this time: `chint.net/products/91.html` (ND16系列信号灯) lists 三维模型图 for
+`ND16-16D`, `ND16-22S`, `ND16-22BK`, `ND16-22LC`, ... With `read_page` the page text is truncated
+at 50 000 chars, but the **Links section keeps every signed `piecewise-file` URL**, and its order
+matches the visible section order:
+
+```
+产品样本 -> 认证证书 x2 -> 试验报告 x3 -> 使用说明书 -> 三维模型图 -> 外形安装尺寸图源文件
+```
+
+So the tail of the link list is the last two tabs - and the last group is 外形安装尺寸图源文件,
+i.e. **drawing source files with zero solids** (`2ZTT-659-*`, 2.2-7.5 MB, bbox ~139 x 111 x 62).
+Blind-downloading the tail cost a round here; one of them even came back **0 bytes from HTTP 200**.
+Always count `MANIFOLD_SOLID_BREP` before believing a downloaded file is a part.
+
+Measured, with the unit taken from the file's own `SI_UNIT`:
+
+| file | unit | solids | bbox | what it is |
+|---|---|---|---|---|
+| `ND16-16D信号灯三维模型202204.stp` | `.MILLI.,.METRE.` | 1 | **18.89 x 45.71 x 26.61** | Ø16 pilot light, front ring Ø18.9, 45.7 long |
+| `ND16-22BK信号灯三维模型202204.stp` | mm | 1 | **28.98 x 28.99 x 52.21** | Ø22 pilot light, front ring Ø29 |
+| `NB1-63H 1P&N...三维模型202404.stp` | (m) | 5 | 0.09 x 0.04 x 0.22 | same catalogue, **metres** |
+
+**CHINT's STEP exports are not unit-consistent across products** - parse `SI_UNIT` or cross-check one
+known dimension before scaling; do not carry a scale over from the previous file. And note the
+refinement to trap 84: CHINT's 三维模型图 set *does* cover 主令电器 (NP2/NP8 按钮, ND16 信号灯,
+HZ5/YBLX 开关) - it is only the bought-in **KCD rocker** that is missing. Check the product line,
+per trademark, not per brand.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
