@@ -1495,6 +1495,30 @@ Two things to carry forward:
    downloads) and 3DContentCentral's 16 A DIN-rail breaker are free-with-registration only - there
    is **no CC0/MIT-licensed miniature circuit breaker CAD** anywhere, so never call one "open source".
 
+### 84. "The vendor publishes CAD" generalises by product LINE, not by brand - and KCD rockers live on GrabCAD
+
+Asked for a model of a **KCD rocker switch** (红翘板/船型开关, grey bezel, 6.3 mm Faston tails), the
+正泰 route that worked for the MCB (trap 83) **fails here**: CHINT resells a KCD4 30 A rocker for
+welders, but its 资料中心 三维模型图 set covers its own industrial-control catalogue (HZ5 组合开关,
+YBLX 行程开关, NP 按钮, NB1/NXHB/NB5LE breakers) and carries **no KCD 船型开关**. Check the
+*product line* against the download centre before promising a vendor STEP.
+
+Where the free supply actually is, measured this session:
+
+| source | KCD coverage | cost |
+|---|---|---|
+| **GrabCAD** `tag/rocker switch` (2 pages) | best by far: **KCD4 30x25 / opening 28x22** (`KCD4.step`, `KCD4_black.step`; modelled from a real switch, **31.10 x 25.5 mm**, outer lip + snap clips + Faston); KCD1-104 15x21; KCD1-105 3-pin; KCD1 round 22.5; KCD11 round 16.5; KCD4-203; plus several generic 2-pin | free account |
+| 3DContentCentral | `KCD11` (catalog 171, id **208370**) and a Chinese `220V船型开关` (id **1400914** on the `.cn` mirror) | free account |
+| McMaster-Carr | rocker category exists and its CAD is login-free | **grid is JS-only**: `read_page` returned nothing but the BROWSE CATALOG shell - harvest part numbers through their SolidWorks add-in/API, not by scraping |
+| 宏图网 | `船型开关KCD1-11` stp + x_t | **10 金币**, and the page footer said 图纸不存在或已下架 |
+| 开拔网(sanweimoxing) / 爱给网 | 船形开关 entries exist | membership / 金币 |
+
+Two rules from this: (1) on Chinese CAD sites **"免费下载" in the marketing copy does not mean free** -
+read the 所需金币 / VIP tier before sending a user there; (2) GrabCAD's new uploads are genuinely
+high quality (a 2026 KCD4 modelled to 31.10 mm with a size drawing beats anything on the paid
+sites), so search it *by component family name* (`KCD1`, `KCD4`, `KCD11`) rather than by
+"rocker switch" alone - the family code is what the uploaders title with.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
