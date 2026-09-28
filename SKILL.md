@@ -392,6 +392,56 @@ example: 50x30x20 mm box → mass properties → save → render.
     render); `IFeature.SetMaterialPropertyValues` returned `True` and applied to one feature
     of three, the rest keeping the source's inherited face colours. Trap 77.
 
+62. **Never guard a job body with `if __name__ == "__main__":` - it never fires.** The driver
+    execs the body with `__name__ = "__swjob__"`, so the guarded code is skipped and the job
+    still reports `STATE: OK (0.14s)` with a 3-line log and no error. Put the work at module
+    level or call `main()` unconditionally; test `sys.argv` if you want a `--params` mode. A
+    sub-second "OK" is the fingerprint - always read the log tail, not just the state. Trap 90.
+
+63. **`IPartDoc.InsertPart2` only accepts a native `.SLDPRT`.** Give it a `.step` and it
+    returns `None` with no error code. To bring a vendor solid into a multi-body part:
+    `load_neutral(step)` (arrives as a 1-component assembly) -> `SaveAs3` the component's own
+    part doc as `.SLDPRT` -> `InsertPart2(that, swInsertPartImportSolids|swInsertPartBreakLink)`
+    (= 513). Assert the body count rises by exactly 1 and the inserted volume matches the
+    vendor model to 1e-4. Trap 91.
+
+64. **Place every body by CONSTRUCTION - `IFeatureManager.InsertMoveCopyBody2` is dead here.**
+    Four argument conventions (distances, direction+`TransDist`, three components, a Z
+    rotation), each with `IBody2.Select2` reporting `True`, all returned `None` and moved
+    nothing. So an inserted vendor solid can never be nudged afterwards: rigid-transform the
+    STEP **offline** (move every `CARTESIAN_POINT`, rotate every `DIRECTION`) and insert the
+    transformed native part. Verify in SOLIDWORKS - the offline point extent is NOT the body
+    box, because STEP files carry origin/axis construction points. Traps 92, 93.
+
+65. **`merge=True` merges with EVERY touching body.** An obround boss started on the PCB's top
+    face fused the rect, both end cylinders **and the whole PCB** into one body (count 2 -> 1).
+    Start a to-be-merged boss **1 um above** the board so it can only merge with its own
+    parts. Keep `merge=False` for genuinely separate bodies (and note that `merge=False` on
+    overlapping parts double-counts volume, so an obround must merge). Trap 94.
+
+66. **Never walk `GetEdges`/`GetCurve` over every body.** On a part with a swept surface that
+    is thousands of COM round trips and it hangs the job for minutes with the document open
+    and the log frozen. Identify the body you want by its box and walk only that one - the PCB
+    has 14 edges. Same family: `IBody2.GetBodyBox` is **loose on a swept solid** (~0.3 mm over
+    on a re-imported B-spline sweep) while its volume is good to 0.002%, so assert curved
+    parts on volume and keep a documented box tolerance. Trap 95.
+
+67. **`ShowNamedView2(name, id)`: the ID drives the view, the NAME is ignored, and this build's
+    ids are not the published ones.** Rendering every id 0..9 and looking at the pictures gave:
+    `0/1` plan, `2` from underneath, `3/4` elevation along X, `5` elevation along Y upside
+    down, `6` elevation along Y upright, `7/8/9` 3D. Id `-1` (trap 58) and id `0` everywhere
+    both leave the view unchanged - the second produced five byte-identical PNGs. Hash every
+    render **and then look at the images**: the hash proves distinctness, not correctness, and
+    it happily passed five mislabelled views. One row of the troubleshooting table below is
+    wrong on this point - see the correction there. Trap 96.
+
+68. **Keep job files free of a UTF-8 BOM.** `Set-Content -Encoding utf8` from PowerShell adds
+    `U+FEFF`, which fails as `SyntaxError: invalid non-printable character U+FEFF` and then
+    blows up the driver's own error path with `UnicodeEncodeError: 'gbk' codec`, hiding the
+    real cause. Write job files with the file-editing tool. Also: `call()` is positional-only,
+    `IComponent2.Name2` is a property (`getv`), and `GetBodies2` does not return bodies in
+    creation order - match on a box/radius/volume signature. Traps 97, 98.
+
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-128-body-board-from-a-vendor-cad-file) carries
 traps 19-28 with the measured numbers, its
@@ -410,6 +460,15 @@ next, then build, verify, export, render). For a part that will be re-scaled, co
 `D:\桌面文件\车架复刻交付\spl122-build\build_spl122.py` instead - it is the same shape of
 script but with every repetition carried in one sketch and no patterns at all
 (rule 54), plus the retry-across-flags cut helper from rule 52.
+
+For a board that mixes **vendor solids with modelled parts**, start from
+`D:\桌面文件\workspace\remote-estop\build_remote_estop.py` (the 433 MHz remote-e-stop board, 23
+bodies). It is the example to copy when the answer to "does a model already exist?" is *yes for some
+parts*: three vendor solids go in through `InsertPart2` after an offline STEP rigid transform
+(`step_transform.py` + `prepare_placed_parts.py`), the spring antenna is built with
+`InsertHelix`+`InsertProtrusionSwept4(CircularProfile=True)` (rule/trap 99), and the geometry checks -
+clash, containment, analytic volume - all run **before** the session is touched, so a layout mistake
+fails in one second instead of leaving a broken document open.
 
 ## Workflows
 
@@ -548,8 +607,14 @@ script but with every repetition carried in one sketch and no patterns at all
 | `IFeature.ModifyDefinition` returns `False`, a set property re-reads unchanged | Pattern instance counts are **not writable** on this build. Suppress whole patterns to change a pole count (trap 88/89). |
 | Redrawing a sketch makes dozens of features error at once | That sketch was a core reference. Trim with a `FeatureCut4` instead — a cut breaks no references (trap 88). |
 | `cast(seg,"IEntity").Select2` -> `无效的参数数目` | Call `Select2` **directly** on the `ISketchSegment` dispatch; or `SelectByID2(seg.GetName(),"SKETCHSEGMENT",...)` (trap 88). |
-| `"*Isometric"` / `"*Top"` / `"*Front"` produce three identical PNGs | Use the **Chinese** view names `"*等轴测"` / `"*上视"` / `"*前视"`, and hash the PNGs to prove they differ (trap 88). |
+| `"*Isometric"` / `"*Top"` / `"*Front"` produce three identical PNGs | **Corrected 2026-09-28:** the view *name* is ignored - only the numeric **id** selects the view, and this build's id enumeration is not the published `swStandardViews_e` (`0/1` plan, `2` underneath, `3/4` along X, `5` along Y upside down, `6` along Y upright, `7/8/9` 3D). Passing id `0` for every call is what produces identical PNGs. Verify by hashing the PNGs **and looking at them** - the hash check cannot detect a mislabelled view (trap 96). |
 | Copy-Item fails: `being used by another process` | A stale document from your own earlier job is open. Close your documents first, then copy (trap 89). |
+| A job reports `STATE: OK (0.14s)` with a 3-line log and nothing built | Its body was guarded by `if __name__ == "__main__":`, which never fires in a job. Move the work to module level (rule 62, trap 90). |
+| `InsertPart2` returns `None` with no error | You handed it a neutral file. It only takes a native `.SLDPRT`: `load_neutral` -> `SaveAs3` the component part -> insert that (rule 63, trap 91). |
+| A successfully inserted body will not move | `InsertMoveCopyBody2` is dead on this build. Rigid-transform the STEP offline and insert the transformed native part (rule 64, trap 92). |
+| A new boss makes the body count go DOWN | `merge=True` fused it with every touching body - it swallowed the PCB. Start the boss 1 um above the board (rule 65, trap 94). |
+| The job hangs with a document open and the log frozen mid-way | A per-edge loop (`GetEdges`/`GetCurve`/`CircleParams`) ran over a swept surface with thousands of edges. Identify the target body by its box and walk only that one (rule 66, trap 95). |
+| `SyntaxError: invalid non-printable character U+FEFF` in a job file | The file has a UTF-8 BOM - usually from PowerShell `Set-Content -Encoding utf8`. Rewrite it with the file-editing tool; the driver's own error path will also fail with a GBK `UnicodeEncodeError` and hide the cause (rule 68, trap 97). |
 
 **Where to find models:** [SOURCES-模型网站.md](SOURCES-模型网站.md) - measured verdicts for
 正泰资料中心, GrabCAD, 3DContentCentral, 迪威模型, PARTcommunity/WAGO, McMaster, TraceParts, NKK and

@@ -1678,6 +1678,207 @@ See also [SOURCES-模型网站.md](SOURCES-模型网站.md) - the measured verdi
 so far (which have vendor STEP, which need a login, which fight scrapers, and the licensing truth:
 there is **no CC0/MIT CAD for breakers, terminals or switches**).
 
+## Tenth part: the 433 MHz remote-e-stop board, three VENDOR solids, and a coil built from a helix
+
+A bare 34.77 x 26.25 x 1.6 mm PCB carrying a SONGLE SRD-05VDC-SL-C relay, a 5-pole screw terminal,
+a helical spring antenna, two electrolytics, a 455E, an SOIC-8 and a scattering of SMDs.  The three
+big parts are the vendor's own solids; everything else is a modelled silhouette.  Finished at 23
+bodies, volume 8581.9069 mm3 against an analytic 8581.9069 (**-0.0000%**), STL 145 620 triangles with
+**0 open edges**.  Job script: `workspace\remote-estop\build_remote_estop.py`.
+
+### 90. A job body's `if __name__ == "__main__":` guard NEVER fires - the job reports OK having done nothing
+
+`swcore.run_job` execs the body with a namespace that contains `"__name__": "__swjob__"` (measured in
+`swcore.py`), so a script written like a normal module runs no code at all and still lands as:
+
+```
+STATE  : OK  (0.14s)
+OUT    : C:\Users\...\swbridge\out\build1
+LOG    : ...\build1.log
+```
+with a log file of three lines and no error anywhere.  It cost a debugging round here.  Write job
+bodies so the work happens at module level, or call `main()` unconditionally; if you want a
+`--params` mode, test `sys.argv`, never `__name__`.  A 0.1 s "OK" is the signature of this failure -
+a real SOLIDWORKS job that attaches and builds cannot finish that fast.
+
+### 91. `IPartDoc.InsertPart2` returns `None` for a neutral file - it only takes a native `.SLDPRT`
+
+Bringing a vendor solid into a multi-body part is the right way to "use the existing model instead of
+redrawing it", and `InsertPart2(file, swInsertPartImportSolids | swInsertPartBreakLink)` does work -
+but **only for a native part**.  Hand it a `.step` and it returns `None` silently; there is no error
+code and no dialog, so the failure looks like "the API is broken" when it is only the wrong file
+type.  The path that works, all measured:
+
+```
+session.load_neutral(step)                 # LoadFile4 -> a one-component ASSEMBLY
+sub = cast(comp, "IComponent2").GetModelDoc2()      # the solid lives in this part doc
+sub.SaveAs3(native.SLDPRT, 0, 1)           # code 0
+cast(part, "IPartDoc").InsertPart2(native.SLDPRT, 513)   # 513 = ImportSolids|BreakLink
+```
+`ImportSolids|BreakLink` (1|512) brings in the solid as a separate body and imports no planes, no
+axes and no external reference - verified by body count (+1 exactly) and by the inserted volume
+matching the vendor model to 1e-4.
+
+### 92. `IFeatureManager.InsertMoveCopyBody2` is dead on this build - place by CONSTRUCTION, never by moving
+
+Four argument conventions were tried (distances in the first three doubles; a direction vector plus
+`TransDist`; all three components plus a negative; rotation about Z), each against a body selected
+with `IBody2.Select2(False, 0)` which reported `True` every time.  Every call returned `None`, the
+body count never changed and no box ever moved:
+
+```
+[A: TransY=30mm, TransDist=0]      select=True feature=None   box unchanged
+[B: dir +Y, TransDist=30mm]        select=True feature=None   box unchanged
+[C: TransX/Y/Z = 25/-10/2 mm]      select=True feature=None   box unchanged
+[D: 90deg about Z]                 select=True feature=None   box unchanged
+```
+The type library says the 12 parameters are `(VT_R8 x10, VT_BOOL, VT_I4)`, so the first four are
+doubles, not flags - the earlier mistake of passing Python bools was real, but fixing it changed
+nothing.  **Consequence for the whole approach**: a vendor solid cannot be repositioned after it is
+inserted, so it must arrive already in place.  The way round it is to rigid-transform the STEP file
+offline (`step_transform.py`) and insert the transformed native part.
+
+### 93. Rigid-transforming a STEP: move every `CARTESIAN_POINT`, rotate every `DIRECTION`, and do not trust the point extent as the body box
+
+A pure rotation+translation of a STEP file is exact and text-only: `CARTESIAN_POINT` entities are
+locations and must be transformed, `DIRECTION` entities are vectors and must be rotated but **not**
+translated, and nothing else carries geometry.  352 points / 360 directions for a relay, 9555 / 22
+for the swept coil.  Two traps around it:
+
+* **The offline point extent is NOT the body box.**  STEP files carry construction points - the part
+  origin and axis placements - so `min/max` over every `CARTESIAN_POINT` over-reports.  The placed
+  coil measured `x 26.7..51.4` offline because one construction point sat at the rotated origin,
+  while its real solid is `x 27.23..35.57`.  Verify the transform in SOLIDWORKS instead: insert it
+  and check the body box **and** the volume.  The volumes came back bit-identical to the untouched
+  vendor models (relay 4689.4348, terminal 1336.1064 mm3), which is what proves the transform was
+  rigid.
+* **A STEP import arrives as an assembly whose component may carry a transform.**  Assert the
+  component's `GetXform` translation is zero and that its LOCAL body box equals the box you targeted;
+  otherwise the placement is wrong in the finished board even though the STEP looks right.
+
+### 94. `merge=True` merges with EVERY touching body - a boss started on the PCB swallowed the whole PCB
+
+An obround (the oval 455E can) is a rectangle plus two tangent cylinders, and the union volume only
+comes out right if those three features merge - `merge=False` would leave three overlapping bodies
+and double-count the volume.  But `merge` does not mean "merge with the part I intend", it means
+"merge with anything I touch", and the boss started on the PCB's top face:
+
+```
+PCB              merge=False  bodies=1  volume=1460.340
+RECT merge=False merge=False  bodies=2  volume=1486.380
+END1 merge=True  merge=True   bodies=1  volume=1495.616   <-- the PCB is gone
+END2 merge=True  merge=True   bodies=1  volume=1504.853
+```
+Body count 2 -> 1: the cylinder bridged the two and SOLIDWORKS fused everything into one body.  The
+fix is to start the boss **1 um above** the board, so the only bodies it can merge with are its own
+three parts.  Measured after the lift: **one** obround body, volume 44.5126 mm3 against an analytic
+44.5126 (**-0.0000%**), and the PCB untouched.  A 1 um gap is far below any modelling tolerance and
+keeps the envelope assertion happy.
+
+### 95. Never walk `GetEdges`/`GetCurve` over *every* body - a swept surface has thousands of edges and it hangs the job
+
+The mounting-hole check (find the dia 3.2 circular rim on the solid) loops bodies -> edges ->
+`GetCurve` -> `IsCircle` -> `CircleParams`, and each of those is a COM round trip.  With 23 bodies
+including a helical sweep, the job went from finishing to **hanging for minutes** with the part open
+and the log frozen mid-way; the process had to be killed and the scratch document closed by title.
+The PCB itself has **14 edges**.  Identify the body you care about by its box and walk only that one -
+the check then costs milliseconds.  Related: `IBody2.GetBodyBox` is **loose on a swept solid**,
+over-reporting ~0.3 mm on the re-imported B-spline sweep while the volume still agrees to 0.002%, so
+assert curved parts on volume and keep a documented tolerance on their box.
+
+### 96. `ShowNamedView2(name, id)`: the ID drives the view and the NAME is ignored - and this build's IDs are not the published ones
+
+Trap 58 records that `-1` is accepted and does nothing.  Worse: the numeric enumeration on this build
+does not match `swStandardViews_e`, and the name argument has no effect, so asking for `("*Top", 5)`
+produced an **upside-down front view** and `("*Front", 1)` produced a **plan view**.  Five "different"
+renders came out byte-identical when every call passed id 0, and the first corrected attempt produced
+five distinct images that were all *mislabelled*.  The mapping was measured by rendering every id 0..9
+and looking at the pictures (`probe_views.py`, montage in `ref\viewprobe\`):
+
+| id | what it actually shows | id | what it actually shows |
+|---|---|---|---|
+| 0, 1 | plan (top) | 5 | elevation along Y, **upside down** |
+| 2 | from underneath | 6 | elevation along Y, upright |
+| 3, 4 | elevation along X (the two sides) | 7, 8, 9 | 3D views |
+
+So the deliverable's four views are ids **0/6/4/7** (+8 for dimetric).  Two lessons that generalise:
+**hash every render and assert they differ**, and then **look at the images** - the hash check proves
+distinctness, not correctness, and it happily passed five mislabelled views.
+
+### 97. A UTF-8 BOM in a job file fails twice - and the second failure is the driver's own error path
+
+Patching a job with PowerShell `Set-Content -Encoding utf8` added `U+FEFF`:
+
+```
+SyntaxError: invalid non-printable character U+FEFF
+```
+and then the reporting boundary that prints the traceback raised
+`UnicodeEncodeError: 'gbk' codec can't encode character '\ufeff'` on top of it, so the actual cause
+was buried under the encoding failure.  Write job files with the file-editing tool, or strip the BOM;
+never `Get-Content | Set-Content` them.  (This is also why every script in this repo starts with a
+bare `# -*- coding: utf-8 -*-` and no BOM.)
+
+### 98. Two smaller ones from the same job
+
+* **`IComponent2.Name2` is a property**, not a method: `call(comp, "Name2")` raises
+  `SwError: IComponent2.Name2 is a property (value '...'), not a method` - use `getv`.
+* **`call()` takes positional arguments only.**  Passing `TransX=...` fails with
+  `TypeError: call() got an unexpected keyword argument 'TransX'`; build the argument tuple yourself.
+* **`GetBodies2` does not return bodies in creation order** (verified again here: a body created third
+  came back at index 2 of 4).  Never read `bodies()[-1]` as "the body I just made" - match on a box,
+  a radius or a volume signature instead.
+
+### 99. A spring antenna in one feature: `InsertHelix` + a **circular-profile** sweep needs no profile sketch
+
+The 433 MHz coil was the one part with no vendor model, and it came out as a single solid body:
+
+```python
+call(plane_feature, "Select2", False, 0)              # 右视基准面 - select the FEATURE, never by name
+call(sm, "InsertSketch", True); call(d, "SetAddToDB", True)
+call(sm, "CreateCircleByRadius", -0.008, 0.020, 0.0, 0.0036)   # local (u,v) maps to world (y,z)=(v,-u)
+call(d, "SetAddToDB", False); call(sm, "InsertSketch", True)   # toggles the sketch CLOSED
+call(ext, "SelectByID2", sk_name, "SKETCH", 0, 0, 0, False, 0, None, 0)
+call(d, "InsertHelix", False, False, False, False,
+     1,                                   # Helixdef = swHelixDefinedByHeightAndRevolution
+     mm(11.0), mm(1.0), 11.0, 0.0, 0.0)   # Height, Pitch, Revolution, TaperAngle, StartAngle
+call(helix_feature, "Select2", False, 0)                              # the HELIX is the path
+call(fm, "InsertProtrusionSwept4",
+     False, False, 0, False, False, 0, 0, False, 0.0, 0.0, 0, 0,
+     True, False, False, 0.0, False, True, mm(1.1), 0)
+#    ↑Merge  ↑UseAutoSelect=False      ↑CircularProfile=True  ↑wire diameter
+```
+`CircularProfile=True` is the whole trick - SOLIDWORKS supplies the round wire itself, so there is no
+second sketch and no profile/path marking dance.  Measured: **1 body**, volume 236.64095 mm3 against
+an analytic 236.68695 (**-0.0194%**, wire length `11*sqrt((2*pi*3.6)^2 + 1^2) = 249.057`), outer
+diameter exactly 8.30000 from the mesh.  `Reversed=False` runs the helix in **+X**; judge the
+direction by the box CENTRE, not by `xmin < 0`, because an 11 mm winding of 1.1 mm wire sticks out
+`r*cos(2.531 deg) = 0.5495 mm` at each square-cut end (solid span 12.09893 = 11.0 + 1.1).
+
+### 100. When the user's stated dimension and the photos disagree, measure it three independent ways, then ASK
+
+This board's spec said 34.77 x 26.25 mm.  The photos said the long edge is 34.77 (736 px at
+21.17 px/mm, matching the component-derived scale of 21.4 px/mm to 1.1%) but the short edge is
+**~30.8 mm**, and three independent scale bars agreed within 2%:
+
+* terminal screw pitch: 20.32 mm over 4 gaps, residual **+0.00%**  -> 21.37 px/mm
+* relay short edge: 15.6 mm across 335 px                        -> 21.6 px/mm
+* board long edge: 34.77 mm across 736 px of green outline        -> 21.17 px/mm
+
+The decisive test was not the scale but **containment**: the five screw centres measured 8.00 .. 28.30 mm
+from the board's left edge, so a 26.25 mm board cannot hold the fifth screw at all - it would sit 2 mm
+outside the edge.  The user chose to build to the stated 34.77 x 26.25 anyway and verify themselves, so
+the model is built to spec and the conflict is written into `README.md` section 3 with the number to
+change (`BOARD_W`) if they re-measure.  Two habits worth keeping: **check that the parts physically fit
+the claimed outline before modelling**, and **surface the conflict instead of silently picking one**.
+
+Also measured, and worth knowing before promising a photogrammetric layout: the foreshortening
+relation is `image_aspect = true_aspect / c` (an obliquely-viewed plane is *compressed* along the tilt
+direction, so the image gets *relatively wider*), and `c <= 1` is a hard constraint that can rule an
+orientation out.  It did not settle this board, because the relay, coil and terminal hide nearly all of
+the right and bottom edges - the outline cross-check failed while the component-anchored X coordinates
+(the horizontal direction is unforeshortened) stayed trustworthy.  A photo of a board whose edges are
+occluded can pin component positions but not the outline.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
