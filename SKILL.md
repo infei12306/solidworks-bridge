@@ -442,6 +442,33 @@ example: 50x30x20 mm box → mass properties → save → render.
     `IComponent2.Name2` is a property (`getv`), and `GetBodies2` does not return bodies in
     creation order - match on a box/radius/volume signature. Traps 97, 98.
 
+69. **`FeatureCut4` takes TWENTY-SEVEN arguments, and `Dir` must be `True`.** A short argument
+    list gives `DISP_E_TYPEMISMATCH (0x80020005)` with `paramErr` = the index. Worse, a blind
+    cut with `Dir=False` runs **opposite the sketch normal AND still returns a feature**: the
+    cavity cut here removed 31200 mm3 (the 2 mm floor) instead of 468000 and reported OK. Never
+    judge a cut by "the feature is not None" - snapshot the whole-part volume against the
+    analytic value after every phase (`snap()`), because that is the only oracle. Also:
+    `GetMassProperties2` returns status 1 while a sketch is open, and a nested helper must be
+    defined before the function that calls it or you get `NameError: cannot access free
+    variable ... where it is not associated with a value in enclosing scope`. Traps 101-104.
+
+70. **Cut every opening BEFORE you build the body that fills it.** A cut feature removes
+    material from every body in its path, so placing a D-sub flange (31 mm) and then cutting its
+    23 mm opening shaves a slab off the flange - and quietly breaks the analytic volume, which
+    counts each boss as a full prism. Related: a blind boss only runs along +normal, so an
+    opening on the FAR panel must start inside the cavity (`CASE_Y - WALL - 1`); starting it one
+    millimetre outside the face only removes 1 mm of a 2.5 mm wall and leaves a membrane.
+    Traps 105, 106.
+
+71. **Start the analytic from the solid you actually build, not from the bounding box.** A case
+    that is a 32 mm shell plus top fins has a starting volume of `135*125*32 + fins`, not
+    `135*125*40`; using the box over-subtracts the air between the fins and misses reality by a
+    factor of 1.6. And do not assert that the model starts at the origin when panel hardware
+    (D-sub flanges, screws, SMA nuts) is meant to protrude - assert instead that some body still
+    carries the bare case outline. A merged STL of flush-stacked hardware reports
+    **non-manifold** edges from coincident faces while `open_edges` stays 0: report the number
+    and its cause, do not tighten the check. Traps 107-109.
+
 Worked examples and the full trap list: [MODELING.md](MODELING.md) - its
 [second part](MODELING.md#second-part-a-128-body-board-from-a-vendor-cad-file) carries
 traps 19-28 with the measured numbers, its

@@ -1879,6 +1879,127 @@ the right and bottom edges - the outline cross-check failed while the component-
 (the horizontal direction is unforeshortened) stayed trustworthy.  A photo of a board whose edges are
 occluded can pin component positions but not the outline.
 
+## Eleventh part: a fanless industrial PC - shelling by hand, and the cut direction that lies
+
+A 135 x 125 x 40 mm fanless mini PC: an extruded aluminium case with 21 heat-sink fins on top,
+a hollow shell (2.5 mm walls, 2 mm floor) and **twelve port openings on the two 135 x 40 panels**
+plus two SMA bulkheads on the side walls.  Every opening is both cut and filled with a body of the
+same cross-section, which is what keeps the analytic volume exact.  Finished at 26 bodies, volume
+175704.478 mm3 against an analytic 175637.995 (**+0.0379%**), STEP with **26 of 26** solids and an
+STL with **0 open edges**.  Job script: `workspace\industrial-pc\build_industrial_pc.py`.
+
+Sketch-plane mappings used, all measured earlier and reused verbatim (world = u*e_u + v*e_v):
+
+| plane | normal | e_u | e_v | maps to |
+|---|---|---|---|---|
+| 前视基准面 | +Z | (1,0,0) | (0,1,0) | (u, v, 0) |
+| 上视基准面 | +Y | (1,0,0) | (0,0,-1) | (u, 0, -v) |
+| 右视基准面 | +X | (0,0,-1) | (0,1,0) | (0, v, -u) |
+
+So the case and the fins (a Z extent) are built on the FRONT plane, the two port panels (a Y
+extent) on the TOP plane, and the SMA holes (an X extent) on the RIGHT plane.
+
+### 101. `FeatureCut4` takes **twenty-seven** arguments, and a wrong count reports `paramErr` 25
+
+The call inherited from an earlier job had 24 arguments and failed with
+`com_error(-2147352571, '类型不匹配', None, 25)` - `DISP_E_TYPEMISMATCH`, with the argument index in
+the fourth field.  The type library order is
+
+```
+Sd, Flip, Dir, T1, T2, D1, D2, Dchk1, Dchk2, Ddir1, Ddir2, Dang1, Dang2,
+OffsetReverse1, OffsetReverse2, TranslateSurface1, TranslateSurface2,
+NormalCut, UseFeatScope, UseAutoSelect, AssemblyFeatureScope, AutoSelectComponents,
+PropagateFeatureToParts, T0, StartOffset, FlipStartOffset, OptimizeGeometry
+```
+
+Read the count off `C:\Users\<you>\AppData\Local\swbridge\stubs\_sldworks_gen.py` rather than
+counting a working call by eye - the four flags between `Dang2` and `NormalCut` are easy to drop.
+
+### 102. A blind cut with `Dir=False` runs OPPOSITE the sketch normal - and still returns a feature
+
+This is the most expensive trap in this part, because the failure is silent and the feature looks
+successful.  The cavity cut on the FRONT plane (normal +Z, start z = 2, depth 30) reported `OK` and
+removed **31200 mm3 = 130 x 120 x 2** - exactly the 2 mm floor slab - instead of 468000 mm3.  It had
+cut in -Z.  A whole-material variant search that accepts any non-`None` feature therefore accepts the
+wrong cut, which is what an earlier version of the helper did.
+
+```
+cut CAVITY  t0=3 flip=False dir=False -> OK     (removed 31200, should be 468000)
+cut CAVITY  t0=3 flip=False dir=True  -> OK     (removed 468000)
+```
+
+**Use `Dir=True` for every blind cut**, and treat the whole-part volume against the analytic value as
+the only oracle.  A stage snapshot after each phase is what exposed it:
+
+```
+SNAP after heat sink   volume 615600.000  bodies  1
+SNAP after cavity      volume 147600.000  bodies  1     <-- correct only with Dir=True
+SNAP after ports       volume 174559.222  bodies 22
+SNAP after SMA         volume 175704.478  bodies 26
+```
+
+Also note `T0 = swStartOffset` works even when the offset is 0, on all three planes; there is no need
+to switch to `swStartSketchPlane`.
+
+### 103. `GetMassProperties2` fails with status 1 while a sketch is open
+
+Measuring the volume either side of a cut - the obvious way to prove a cut removed material - cannot
+be done inside the feature helper, because the sketch it just drew is still in edit mode and mass
+properties then return status **1**.  Either exit the sketch first (which then has to be re-entered
+for the feature, and re-entering an existing sketch re-opens it - trap 59) or, much simpler, take
+whole-part snapshots between phases, as above.
+
+### 104. A nested helper must be DEFINED before the function that calls it
+
+`rect()` routed `is_cut=True` through `write_cut()`, which was defined further down `main()`:
+
+```
+NameError: cannot access free variable 'write_cut' where it is not associated with a value in enclosing scope
+```
+
+Not "name is not defined" - Python reports a free variable that exists in the enclosing scope but is
+not yet bound, which reads like a scoping bug rather than an ordering bug.  A syntax check (`ast.parse`)
+does not catch it either; only running does.
+
+### 105. A cut removes material from EVERY body in its path - so cut before you build
+
+The tooling is cut-then-fill: cut the opening, then place the connector body in it.  Doing it in the
+other order shaves a slab off the part just placed, because a cut feature applies to all bodies it
+intersects.  Here a 31 mm wide D-sub flange sits on the panel while the opening is only 23 mm wide -
+they overlap in the opening's footprint, so building the flange first and cutting afterwards removes
+part of it.  It also breaks the analytic volume, which counts each boss as a full prism.
+
+### 106. A blind boss only runs along +normal, so a far-side opening must start inside the cavity
+
+The two port panels face opposite ways.  Panel A (Y = 0) needs no start offset at all - a cut from the
+sketch plane runs +Y into the wall.  Panel B (Y = 125) cannot be reached that way: starting the cut at
+`CASE_Y - 1` only removes 1 mm of the 2.5 mm wall and leaves a 1.5 mm membrane.  It has to start
+**1 mm inside the cavity**, at `CASE_Y - WALL - 1`.  The same asymmetry bit the side-wall SMA holes
+(the +X one needed its start at `CASE_X - 1`).  Verify by the removed volume, not by the feature.
+
+### 107. Start the analytic from the solid you actually build, not from the bounding box
+
+The case body is 32 mm tall and everything above it is fins plus a central block, so the starting
+volume is `135*125*32 + fins + block = 615600`, **not** `135*125*40 = 675000`.  Using the bounding box
+over-subtracts the open air between the fins and the analytic misses reality by a factor of 1.6
+(measured 610556 against a predicted 235038, i.e. +160%).  The fins had already been verified exactly
+against the analytic before the cavity cut, which is what localised the error to the starting volume.
+
+### 108. Protruding hardware legitimately breaks the envelope assertion
+
+D-sub flanges and their screws stand off the panels (y = -6..0 and 125..131) and the SMA nuts stand
+off the side walls (x = -2..0 and 135..137), so the whole-part envelope is
+`x -2..137, y -6..131, z 0..40` - **larger than the case on purpose**.  An assertion that "the model
+starts at the origin" is wrong for any part with panel hardware.  What must hold instead: some body
+still carries the bare `0..135 x 0..125 x 0..40` case outline, and the Z range is untouched.
+
+### 109. Face-to-face contacts make `non-manifold` edges in a merged STL, and that is not a defect
+
+The flange plates, the flange screws and the SMA nuts sit flush against the case, so a merged-STL
+edge histogram counts 21 edges shared by four triangles while **open edges stay 0**.  Coincident
+faces are normal for hardware stacked on a panel; only open edges indicate a hole.  Report the number
+and its cause rather than tightening the check until it passes.
+
 ## Process: what this project cost, and how to run the next one
 
 Honest accounting, because the API traps above are only half the lesson.
